@@ -1,5 +1,5 @@
 /************************************************************
- * 1. CONFIGURAÇÕES E UTILITÁRIOS
+ * 1. CONFIGURAÇÕES E UTILITÁRIOS (atualizado em: 16/03/2026 - 10:10)
  ************************************************************/
 const CONFIG = {
   ABERTURA: 'abertura_de_chamado', 
@@ -48,7 +48,7 @@ const formatar = {
 };
 
 /************************************************************
- * 2. ROTEADOR (O que o seu Acionador de Formulário chama)
+ * 2. ROTEADOR (O que o seu Acionador de Formulário chama) 
  ************************************************************/
 function rotearFormulario(e) {
   const nomeAba = e.range.getSheet().getName();
@@ -65,7 +65,7 @@ function rotearFormulario(e) {
 }
 
 /************************************************************
- * 3. MENSAGEM DE ABERTURA (O seu código de design)
+ * 3. MENSAGEM DE ABERTURA (O seu código de design) | (atualizado em: 16/03/2026 - 10:10)
  ************************************************************/
 function notificarAbertura(v) {
   const get = (campo) => v[campo] ? v[campo][0].trim() : '';
@@ -108,7 +108,7 @@ function notificarAbertura(v) {
 }
 
 /************************************************************
- * 4. MENSAGEM DE CAMPO (Atendimento encerrado)
+ * 4. MENSAGEM DE CAMPO (Atendimento encerrado) | (atualizado em: 16/03/2026 - 10:10)
  ************************************************************/
 function notificarCampo(v) {
   const get = (campo) => v[campo] ? v[campo][0].trim() : '';
@@ -188,7 +188,7 @@ function notificarCampo(v) {
 }
 
 /************************************************************
- * 5. CONSOLIDAÇÃO (Gravar na Planilha BASE_CONSOLIDADA)
+ * 5. CONSOLIDAÇÃO (Gravar na Planilha BASE_CONSOLIDADA) | (atualizado em: 16/03/2026 - 10:10)
  ************************************************************/
 function consolidarChamados() {
   const sheetBase = sh(CONFIG.BASE);
@@ -230,7 +230,7 @@ function consolidarChamados() {
 }
 
 /************************************************************
- * 6. RELATÓRIOS AUTOMÁTICOS (TIME-DRIVEN)
+ * 6. FUNÇÕES COMPLEMENTARES (TIME-DRIVEN) | (atualizado em: 16/03/2026 - 10:10)
  ************************************************************/
 function enviarCompiladoPeriodico() {
   const dados = sh(CONFIG.BASE).getDataRange().getValues();

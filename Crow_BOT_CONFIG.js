@@ -1,10 +1,11 @@
 /************************************************************
- * 1. CONFIGURAÇÕES E UTILITÁRIOS
+ * 1. CONFIGURAÇÕES E UTILITÁRIOS | (atualizado em: 16/03/2026 - 13:15)
  ************************************************************/
 const CONFIG = {
   ABERTURA: 'abertura_de_chamado', 
   CAMPO: 'relatorio_em_campo',      
   BASE: 'BASE_CONSOLIDADA',
+  ESCALA: 'Escala_diaria_2026',
   STATUS_PADRAO: 'Aguardando atendimento',
   TELEGRAM: {
     TOKEN: '8237808044:AAHJf09271f0oPL88_nFXCmoWRqdu6TIxHU',
