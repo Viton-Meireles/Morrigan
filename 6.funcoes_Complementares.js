@@ -14,19 +14,36 @@ function enviarCompiladoPeriodico() {
   enviarTelegram(CONFIG.TELEGRAM.CHATS.COMPILADO, msg);
 }
 
+// Esta função roda diariamente, às 08:15h, enviando se há chamados agendados do dia ou não.
 function relatorioAgendadosHoje() {
   const dados = sh(CONFIG.BASE).getDataRange().getValues();
-  const hoje = formatar.data(new Date());
-  let msg = `📅 <b>AGENDADOS PARA HOJE (${hoje})</b>\n\n`;
+  const agora = new Date();
+  
+  // Lista para converter o número do dia no nome em português
+  const diasSemana = [
+    'domingo', 'segunda-feira', 'terça-feira', 
+    'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'
+  ];
+
+  const dataNumerica = formatar.data(agora); // Ex: 16/03/2026
+  const diaNome = diasSemana[agora.getDay()]; // Pega o nome conforme o dia atual
+  const dataCompleta = `${dataNumerica} ('${diaNome}')`;
+
+  let msg = `📅 <b>AGENDADOS PARA HOJE</b>\n📍 ${dataCompleta}\n\n`;
   let encontrou = false;
 
   dados.slice(1).forEach(r => {
-    if (formatar.data(r[15]) === hoje) { // Coluna P
+    // Verifica se a data na coluna P (índice 15) é igual a hoje
+    if (formatar.data(r[15]) === dataNumerica) {
       encontrou = true;
       msg += `🔔 <b>Chamado ${r[1]}</b>\n🧭 ${r[4]} | 📍 ${r[9]}\n\n`;
     }
   });
-  if (!encontrou) msg = `✅ <b>Não há agendados para hoje, ${hoje}.</b>`;
+
+  if (!encontrou) {
+    msg = `‼️ <b>Não há agendamentos para hoje.</b>\n ↳📅 ${dataCompleta}`;
+  }
+
   enviarTelegram(CONFIG.TELEGRAM.CHATS.ABERTURA, msg);
 }
 
@@ -57,9 +74,9 @@ function enviarPlantaoDiario() {
       
       msg += `<blockquote><b>Equipe Técnica:</b>\n↳ ${tecnico}</blockquote>\n`;
       msg += `<blockquote><b>Equipe Operacional:</b>\n↳ ${operacional}</blockquote>\n`;
-      msg += `<blockquote><b>Setor de Entrada:</b>\n↳ ${entrada}</blockquote>\n`;
+      msg += `<blockquote><b>Setor de Entrada:</b>\n↳ ${entrada}</blockquote>\n\n`;
       
-      msg += `\n<i>Bom trabalho a todos! 🚒</i>`;
+      msg += `<i> 📣 Bom trabalho a todos! </i>`;
       
       // Envia para o canal de Abertura ou de Compilado (você escolhe o ID)
       enviarTelegram(CONFIG.TELEGRAM.CHATS.ABERTURA, msg);

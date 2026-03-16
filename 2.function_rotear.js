@@ -4,13 +4,16 @@
 function rotearFormulario(e) {
   const nomeAba = e.range.getSheet().getName();
   
-  // Primeiro, sincroniza os dados na planilha Master
+  // 1. Sincroniza a planilha
   consolidarChamados();
 
-  // Depois, envia as notificações detalhadas
+  // 2. Envia as notificações individuais (Abertura ou Campo)
   if (nomeAba === CONFIG.ABERTURA) {
-    notificarAbertura(e.namedValues);
+    msg_Abertura(e.namedValues);
   } else if (nomeAba === CONFIG.CAMPO) {
-    notificarCampo(e.namedValues);
+    msg_Campo(e.namedValues);
   }
+
+  // 3. NOVO: Atualiza o Compilado Geral sempre que houver movimento
+  msg_Consolidar();
 }
