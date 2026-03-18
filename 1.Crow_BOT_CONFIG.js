@@ -19,31 +19,36 @@ const CONFIG = {
 
 const sh = (nome) => SpreadsheetApp.getActive().getSheetByName(nome);
 
-const formatar = {
   // Recebe "13/03/2026 16:17:00" -> Devolve "13/03/2026"
+const formatar = {
   data: (v) => {
     if (!v) return 'Não informado';
+    // Se já for uma data do sistema, formata certinho
+    if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), 'dd/MM/yyyy');
     let s = String(v);
-    // Se tem espaço, a data é o que vem antes do espaço
     return s.includes(' ') ? s.split(' ')[0] : s;
   },
 
   // Recebe "13/03/2026 16:17:00" -> Devolve "16:17"
-  hora: (v) => {
+hora: (v) => {
     if (!v) return '00:00';
+    if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), 'HH:mm');
     let s = String(v);
-    // Pega a parte após o espaço (16:17:00)
     let parteHora = s.includes(' ') ? s.split(' ')[1] : s;
-    // Corta os segundos (pega só os dois primeiros blocos)
     let blocos = parteHora.split(':');
     return blocos.length >= 2 ? `${blocos[0].padStart(2, '0')}:${blocos[1].padStart(2, '0')}` : parteHora;
   },
 
   // ID único para a BASE_CONSOLIDADA
-  id: (n, d) => {
-    // Garante que a data esteja no formato YYYYMMDD para o ID
-    let dataLimpa = String(d).split(' ')[0].split('/'); // Pega [13, 03, 2026]
-    let dataIso = dataLimpa.length === 3 ? dataLimpa[2] + dataLimpa[1] + dataLimpa[0] : '00000000';
+ id: (n, d) => {
+    if (!n || !d) return null;
+    let dataLimpa = '';
+    if (d instanceof Date) {
+      dataLimpa = Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyyMMdd');
+      return `${n}_${dataLimpa}`;
+    }
+    let s = String(d).split(' ')[0].split('/');
+    let dataIso = s.length === 3 ? s[2] + s[1] + s[0] : '00000000';
     return `${n}_${dataIso}`;
   }
 };

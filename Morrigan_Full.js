@@ -19,31 +19,36 @@ const CONFIG = {
 
 const sh = (nome) => SpreadsheetApp.getActive().getSheetByName(nome);
 
-const formatar = {
   // Recebe "13/03/2026 16:17:00" -> Devolve "13/03/2026"
+const formatar = {
   data: (v) => {
     if (!v) return 'Não informado';
+    // Se já for uma data do sistema, formata certinho
+    if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), 'dd/MM/yyyy');
     let s = String(v);
-    // Se tem espaço, a data é o que vem antes do espaço
     return s.includes(' ') ? s.split(' ')[0] : s;
   },
 
   // Recebe "13/03/2026 16:17:00" -> Devolve "16:17"
-  hora: (v) => {
+hora: (v) => {
     if (!v) return '00:00';
+    if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), 'HH:mm');
     let s = String(v);
-    // Pega a parte após o espaço (16:17:00)
     let parteHora = s.includes(' ') ? s.split(' ')[1] : s;
-    // Corta os segundos (pega só os dois primeiros blocos)
     let blocos = parteHora.split(':');
     return blocos.length >= 2 ? `${blocos[0].padStart(2, '0')}:${blocos[1].padStart(2, '0')}` : parteHora;
   },
 
   // ID único para a BASE_CONSOLIDADA
-  id: (n, d) => {
-    // Garante que a data esteja no formato YYYYMMDD para o ID
-    let dataLimpa = String(d).split(' ')[0].split('/'); // Pega [13, 03, 2026]
-    let dataIso = dataLimpa.length === 3 ? dataLimpa[2] + dataLimpa[1] + dataLimpa[0] : '00000000';
+ id: (n, d) => {
+    if (!n || !d) return null;
+    let dataLimpa = '';
+    if (d instanceof Date) {
+      dataLimpa = Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyyMMdd');
+      return `${n}_${dataLimpa}`;
+    }
+    let s = String(d).split(' ')[0].split('/');
+    let dataIso = s.length === 3 ? s[2] + s[1] + s[0] : '00000000';
     return `${n}_${dataIso}`;
   }
 };
@@ -276,24 +281,27 @@ function msg_Consolidar() {
   const dados = sheetBase.getDataRange().getValues();
   if (dados.length <= 1) return;
 
-  const hoje = formatar.data(new Date());
-  const agora = `${hoje} às ${formatar.hora(new Date())}`;
+  // Usa o Utilities direto para não ter risco de erro na data/hora atual
+  const agoraObj = new Date();
+  const fuso = Session.getScriptTimeZone();
+  const hoje = Utilities.formatDate(agoraObj, fuso, 'dd/MM/yyyy');
+  const agora = `${hoje} às ${Utilities.formatDate(agoraObj, fuso, 'HH:mm')}`;
 
-  // 5.1. FILTRAGEM: Ocorrências de Hoje OU Agendadas para Hoje
+  // 5.2 FILTRAGEM: Ocorrências de Hoje OU Agendadas para Hoje
   const chamadosDoDia = dados.slice(1).filter(r => {
-    const dataAbertura = r[2]; // Coluna C (Índice 2)
-    const dataAgendada = formatar.data(r[15]); // Coluna P (Índice 15)
+    const dataAbertura = formatar.data(r[2]); // Coluna C
+    const dataAgendada = formatar.data(r[15]); // Coluna P
     return (dataAbertura === hoje || dataAgendada === hoje);
   });
 
-  // 5.2. ESTATÍSTICAS
+  // 5.3 ESTATÍSTICAS
   const total = chamadosDoDia.length;
   const atendidos = chamadosDoDia.filter(r => String(r[3]).includes('Atendido')).length;
   const cancelados = chamadosDoDia.filter(r => String(r[3]).includes('Cancelado')).length;
   const agendados = chamadosDoDia.filter(r => String(r[3]).includes('Agendado')).length;
   const pendentes = total - atendidos - cancelados - agendados;
 
-  // 5.3 MAPA DE ÍCONES E AGRUPAMENTO
+  // 5.4 MAPA DE ÍCONES E AGRUPAMENTO
   const icones = {
     'Arbóreo': '🌳',
     'Acidente viário': '🚧',
@@ -306,58 +314,72 @@ function msg_Consolidar() {
 
   const grupos = {};
   chamadosDoDia.forEach(r => {
-    const tipologiaBruta = r[4] || 'Outros'; // Coluna E (Tipologia)
+    const tipologiaBruta = r[4] || 'Outros'; 
     const nomeLimpo = tipologiaBruta.replace(/[^\w\sÀ-ú]/g, '').trim();
     if (!grupos[nomeLimpo]) grupos[nomeLimpo] = [];
     grupos[nomeLimpo].push(r);
   });
 
-  // 5.4 CABEÇALHO DA MENSAGEM
+  // 5.5 CABEÇALHO DA MENSAGEM
   let msg = `📊 <b>COMPILADO DE CHAMADOS</b>\n`;
-  msg += `<i>Atualizado em: ${agora}</i>\n\n`;
+  msg += `Última atualização: ${agora}\n\n`;
   
-  msg += `<b>Demandas de Hoje:</b> ${total}\n`;
+  msg += `<b>TOTAL DE CHAMADOS:</b> ${total}\n`;
   msg += `✅ Atendidos: ${atendidos}\n`;
   msg += `⏳ Pendentes: ${pendentes}\n`;
-  if (agendados > 0) msg += `🕒 Agendados: ${agendados}\n`;
-  if (cancelados > 0) msg += `❌ Cancelados: ${cancelados}\n`;
-  msg += `──────────────────\n\n`;
+  msg += `📅 Agendados: ${agendados}\n`;
+  msg += `❌ Cancelados: ${cancelados}\n`;
+  msg += `──────────────────\n`;
 
-  // 5.5 CORPO POR CATEGORIA
+  // 5.6 CORPO POR CATEGORIA E DETALHES DO CHAMADO
   for (const categoria in grupos) {
     const emoji = icones[categoria] || '📋';
-    msg += `${emoji} <b>| ${categoria.toUpperCase()}</b>\n`;
+    msg += `${emoji} | <b>${categoria.toUpperCase()}:</b>\n\n`;
     
     grupos[categoria].forEach(r => {
-      // Define emoji de status
-      let statusEmoji = '⏳';
-      const statusTxt = String(r[3]);
-      if (statusTxt.includes('Atendido')) statusEmoji = '✅';
-      if (statusTxt.includes('Cancelado')) statusEmoji = '❌';
-      if (statusTxt.includes('Agendado')) statusEmoji = '🕒';
-
-      // Informações base (Nº do Chamado e Bairro)
+      // Mapeamento das colunas da BASE_CONSOLIDADA
       const chamadoNum = r[1]; // Coluna B
-      const bairro = r[9] || 'S/N'; // Coluna J (Bairro Confirmado/Inicial)
-      const infoData = r[2] !== hoje ? ` <i>(Agendado)</i>` : '';
+      const statusTxt = String(r[3]); // Coluna D
+      const logradouro = r[7] || 'Logradouro não informado'; // Coluna H
+      const numRaw = String(r[8]); // Coluna I
+      const numFinal = (numRaw === '00' || numRaw === '' || numRaw === 'undefined') ? 's/n' : numRaw;
+      const bairro = r[9] || 'Bairro não informado'; // Coluna J
+      
+      // Tratamento seguro do relato (Contra o erro do HTML no Telegram)
+      let relatoSeguro = String(r[14] || 'Sem observações.').trim(); // Coluna O
+      relatoSeguro = relatoSeguro.replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-      msg += `↳ ${statusEmoji} 📄 <b>${chamadoNum}</b> - ${bairro}${infoData}\n`;
-      
-      // ALERTAS DINÂMICOS: Lê as colunas S (18), U (20) e V (21)
-      let alertas = [];
-      if (String(r[18]).toLowerCase().includes('sim')) alertas.push('📦 Doação');
-      if (r[20] && String(r[20]).trim() !== '') alertas.push('📝 Notificado');
-      if (r[21] && String(r[21]).trim() !== '') alertas.push('🏢 Órgão Acionado');
-      
-      // Só cria a linha de alerta se algo foi registrado
-      if (alertas.length > 0) {
-        msg += `   <i>↳ ${alertas.join(' | ')}</i>\n`;
+      // Lógica Dinâmica de Status, Tempo e Ação
+      let statusEmoji = '⏳';
+      let acao = 'Aguardando atendimento em';
+      let dataOcorrencia = `${formatar.data(r[2])} às ${formatar.hora(r[2])}`; // Padrão: Abertura
+
+      if (statusTxt.includes('Atendido')) {
+        statusEmoji = '✅';
+        acao = 'Atendido em';
+        if (r[13]) dataOcorrencia = `${formatar.data(r[13])} às ${formatar.hora(r[13])}`; // Usa Data Atend (N)
+      } 
+      else if (statusTxt.includes('Agendado')) {
+        statusEmoji = '📅';
+        acao = 'Agendado para';
+        if (r[15]) dataOcorrencia = formatar.data(r[15]); // Usa Data Agendamento (P)
       }
+      else if (statusTxt.includes('Cancelado')) {
+        statusEmoji = '❌';
+        acao = 'Cancelado';
+      }
+
+      // Montagem do bloco idêntico ao planejado
+      msg += `↳ <b>Chamado: ${chamadoNum}</b>\n`;
+      msg += `📍 ${logradouro}, ${numFinal} - ${bairro}\n`;
+      msg += `🧭 Status: ${statusEmoji} ${statusTxt}\n`;
+      msg += `⏰ ${acao} ${dataOcorrencia}\n`;
+      msg += `📄 Relato em campo: <i>${relatoSeguro}</i>\n`;
+      msg += `──────────────────\n`;
     });
-    msg += `\n`;
   }
 
-  // 5.6 TRATAMENTO CASO NÃO HAJA MOVIMENTO NO DIA
+  // 5.7 TRATAMENTO CASO NÃO HAJA MOVIMENTO NO DIA
   if (total === 0) {
     msg = `📊 <b>COMPILADO DE CHAMADOS</b>\n\n` +
           `‼️ <b>Não há demandas registradas ou agendadas para hoje.</b>\n` +
