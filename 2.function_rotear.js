@@ -1,19 +1,18 @@
 /************************************************************
- * 2. ROTEADOR (O que o seu Acionador de Formulário chama) 
+ * 2. ROTEADOR (O que o seu Acionador de Formulário chama)
  ************************************************************/
 function rotearFormulario(e) {
   const nomeAba = e.range.getSheet().getName();
   
-  // 1. Sincroniza a planilha
+  // Primeiro, sincroniza os dados na planilha Master
   consolidarChamados();
 
-  // 2. Envia as notificações individuais (Abertura ou Campo)
+  // Depois, envia as notificações detalhadas
   if (nomeAba === CONFIG.ABERTURA) {
-    msg_Abertura(e.namedValues);
+    notificarAbertura(e.namedValues);
   } else if (nomeAba === CONFIG.CAMPO) {
-    msg_Campo(e.namedValues);
+    notificarCampo(e.namedValues);
   }
-
   // 3. NOVO: Atualiza o Compilado Geral sempre que houver movimento
-  msg_Consolidar();
+    msg_Consolidar();
 }
