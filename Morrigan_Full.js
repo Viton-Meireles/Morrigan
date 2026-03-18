@@ -272,28 +272,47 @@ function consolidarChamados() {
 }
 
 /************************************************************
- * 5.1. msg_Consolidar (PARTE 2: Enviar Mensagem Consolidada)
+ * 5. msg_Consolidar (PARTE 2: Enviar Mensagem Consolidada)
  * Painel de Controle Vivo (Novos + Agendados + Alertas)
  ************************************************************/
 
-function msg_Consolidar() {
+function msg_Consolidar(dataEspecifica) {
   const sheetBase = sh(CONFIG.BASE);
   const dados = sheetBase.getDataRange().getValues();
   if (dados.length <= 1) return;
 
-  // Usa o Utilities direto para não ter risco de erro na data/hora atual
+  // Relógio do Sistema (Para registrar QUANDO a mensagem foi enviada)
   const agoraObj = new Date();
   const fuso = Session.getScriptTimeZone();
-  const hoje = Utilities.formatDate(agoraObj, fuso, 'dd/MM/yyyy');
-  const agora = `${hoje} às ${Utilities.formatDate(agoraObj, fuso, 'HH:mm')}`;
+  const dataHojeSistema = Utilities.formatDate(agoraObj, fuso, 'dd/MM/yyyy');
+  const agora = `${dataHojeSistema} às ${Utilities.formatDate(agoraObj, fuso, 'HH:mm')}`;
 
-  // 5.2 FILTRAGEM: Ocorrências de Hoje OU Agendadas para Hoje
+  // 5.1 LÓGICA DA DATA DE REFERÊNCIA (Efeito Cinderela resolvido)
+  let dataAlvo = dataEspecifica;
+
+  // Se o disparo veio automático do formulário (sem data específica pedida)
+  if (!dataAlvo) {
+    let maxUpdate = 0;
+    dados.slice(1).forEach(r => {
+      const dataAtualizacao = new Date(r[22]).getTime(); // Coluna W (Última Atualização)
+      if (dataAtualizacao > maxUpdate) {
+        maxUpdate = dataAtualizacao;
+        // Pega a Data de Abertura (Col C) do chamado mais recente que foi editado
+        dataAlvo = formatar.data(r[2]); 
+      }
+    });
+  }
+  
+  // Fallback de segurança
+  if (!dataAlvo) dataAlvo = dataHojeSistema;
+
+  // 5.2 FILTRAGEM: Ocorrências da DATA ALVO (Abertos nela OU Agendados para ela)
   const chamadosDoDia = dados.slice(1).filter(r => {
     const dataAbertura = formatar.data(r[2]); // Coluna C
     const dataAgendada = formatar.data(r[15]); // Coluna P
-    return (dataAbertura === hoje || dataAgendada === hoje);
+    return (dataAbertura === dataAlvo || dataAgendada === dataAlvo);
   });
-
+  
   // 5.3 ESTATÍSTICAS
   const total = chamadosDoDia.length;
   const atendidos = chamadosDoDia.filter(r => String(r[3]).includes('Atendido')).length;
@@ -320,15 +339,14 @@ function msg_Consolidar() {
     grupos[nomeLimpo].push(r);
   });
 
-  // 5.5 CABEÇALHO DA MENSAGEM
+// 5.5 CABEÇALHO DA MENSAGEM (Com o novo campo de Referência)
   let msg = `📊 <b>COMPILADO DE CHAMADOS</b>\n`;
-  msg += `Última atualização: ${agora}\n\n`;
+  msg += `📅 <b>Referência:</b> ${dataAlvo}\n`;
+  msg += `<i>Última atualização: ${agora}</i>\n\n`;
   
   msg += `<b>TOTAL DE CHAMADOS:</b> ${total}\n`;
-  msg += `✅ Atendidos: ${atendidos}\n`;
-  msg += `⏳ Pendentes: ${pendentes}\n`;
-  msg += `📅 Agendados: ${agendados}\n`;
-  msg += `❌ Cancelados: ${cancelados}\n`;
+  msg += `✅ Atendidos: ${atendidos}  ⏳ Pendentes: ${pendentes}\n`;
+  msg += `📅 Agendados: ${agendados}  ❌ Cancelados: ${cancelados}\n`;
   msg += `──────────────────\n`;
 
   // 5.6 CORPO POR CATEGORIA E DETALHES DO CHAMADO
@@ -381,9 +399,10 @@ function msg_Consolidar() {
 
   // 5.7 TRATAMENTO CASO NÃO HAJA MOVIMENTO NO DIA
   if (total === 0) {
-    msg = `📊 <b>COMPILADO DE CHAMADOS</b>\n\n` +
-          `‼️ <b>Não há demandas registradas ou agendadas para hoje.</b>\n` +
-          `📅 <i>${hoje}</i>`;
+    msg = `📊 <b>COMPILADO DE CHAMADOS</b>\n`;
+    msg += `📅 <b>Referência:</b> ${dataAlvo}\n\n`;
+    msg += `‼️ <b>Não há demandas registradas ou agendadas para esta data.</b>\n`;
+    msg += `<i>Atualizado em: ${agora}</i>`;
   }
 
   enviarTelegram(CONFIG.TELEGRAM.CHATS.COMPILADO, msg);
@@ -586,18 +605,35 @@ function doPost(e) {
       buscarPorEndereco(chatId, termo);
     }
 
-    // 8.3 COMANDO: /status (Chama o compilado na hora)
-    else if (comando === '/status') {
-      msg_Consolidar();
-      enviarTelegram(chatId, "📊 <i>Compilado atualizado enviado ao canal.</i>");
-    }
+// 8.3 COMANDO: /status (Chama o compilado na hora)
+else if (comando === '/status') {
+  const fuso = Session.getScriptTimeZone();
+  const hojeBot = Utilities.formatDate(new Date(), fuso, 'dd/MM/yyyy');
+  msg_Consolidar(hojeBot); // Passa a data de hoje como referência
+  enviarTelegram(chatId, "📊 <i>Compilado atualizado enviado ao canal.</i>");
+}
 
     // 8.4 COMANDO: /escala
     else if (comando === '/escala') {
       msg_EnviarEscala("SOLICITAÇÃO");
     }
 
-    // 8.5 COMANDO: /ajuda
+// 8.5 NOVO COMANDO: /contatos
+    else if (comando === '/contatos') {
+      let contatos = `☎️ <b>TELEFONES ÚTEIS - DEFESA CIVIL</b>\n`;
+      contatos += `──────────────────\n\n`;
+      contatos += `🚒 <b>BOMBEIROS:</b> 193\n`;
+      contatos += `🚓 <b>POLÍCIA MILITAR:</b> 190\n`;
+      contatos += `💡 <b>CEMIG:</b> 116\n`;
+      contatos += `💧 <b>COPASA:</b> 115\n`;
+      contatos += `🌳 <b>MEIO AMBIENTE (Poda):</b> 31 9643-9350\n`; // Coloque o número da sua cidade
+      contatos += `🏥 <b>SAMU:</b> 192\n\n`;
+      contatos += `<i>💡 Clique no número para ligar direto.</i>`;
+      
+      enviarTelegram(chatId, contatos);
+    }
+
+    // 8.6 COMANDO: /ajuda
     else if (comando === '/ajuda' || comando === '/start') {
       let ajuda = `🤖 <b>ASSISTENTE OPERACIONAL</b>\n\n`;
       ajuda += `🔎 <code>/busca [nº] [data]</code> - Detalhes precisos\n`;
@@ -614,7 +650,7 @@ function doPost(e) {
 }
 
 /************************************************************
- * 8.6 FUNÇÕES DE PESQUISA NA BASE
+ * 8.7 FUNÇÕES DE PESQUISA NA BASE
  ************************************************************/
 
 // Busca por ID Único (Número + Data)
@@ -678,6 +714,19 @@ function buscarPorEndereco(chatId, termo) {
   enviarTelegram(chatId, msg);
 }
 
+/************************************************************
+ * FUNÇÃO DE ENVIO DE MENSAGEM PARA O TELEGRAM - OBRIGATÓRIA
+ ************************************************************/
+
+function enviarTelegram(chatId, mensagem) {
+  const url = `https://api.telegram.org/bot${CONFIG.TELEGRAM.TOKEN}/sendMessage`;
+  UrlFetchApp.fetch(url, {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify({ chat_id: chatId, text: mensagem, parse_mode: 'HTML', disable_web_page_preview: true }),
+    muteHttpExceptions: true
+  });
+}
 /************************************************************
  * FUNÇÃO DE ENVIO DE MENSAGEM PARA O TELEGRAM - OBRIGATÓRIA
  ************************************************************/

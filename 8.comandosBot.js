@@ -35,18 +35,35 @@ function doPost(e) {
       buscarPorEndereco(chatId, termo);
     }
 
-    // 8.3 COMANDO: /status (Chama o compilado na hora)
-    else if (comando === '/status') {
-      msg_Consolidar();
-      enviarTelegram(chatId, "📊 <i>Compilado atualizado enviado ao canal.</i>");
-    }
+// 8.3 COMANDO: /status (Chama o compilado na hora)
+else if (comando === '/status') {
+  const fuso = Session.getScriptTimeZone();
+  const hojeBot = Utilities.formatDate(new Date(), fuso, 'dd/MM/yyyy');
+  msg_Consolidar(hojeBot); // Passa a data de hoje como referência
+  enviarTelegram(chatId, "📊 <i>Compilado atualizado enviado ao canal.</i>");
+}
 
     // 8.4 COMANDO: /escala
     else if (comando === '/escala') {
       msg_EnviarEscala("SOLICITAÇÃO");
     }
 
-    // 8.5 COMANDO: /ajuda
+// 8.5 NOVO COMANDO: /contatos
+    else if (comando === '/contatos') {
+      let contatos = `☎️ <b>TELEFONES ÚTEIS - DEFESA CIVIL</b>\n`;
+      contatos += `──────────────────\n\n`;
+      contatos += `🚒 <b>BOMBEIROS:</b> 193\n`;
+      contatos += `🚓 <b>POLÍCIA MILITAR:</b> 190\n`;
+      contatos += `💡 <b>CEMIG:</b> 116\n`;
+      contatos += `💧 <b>COPASA:</b> 115\n`;
+      contatos += `🌳 <b>MEIO AMBIENTE (Poda):</b> 31 9643-9350\n`; // Coloque o número da sua cidade
+      contatos += `🏥 <b>SAMU:</b> 192\n\n`;
+      contatos += `<i>💡 Clique no número para ligar direto.</i>`;
+      
+      enviarTelegram(chatId, contatos);
+    }
+
+    // 8.6 COMANDO: /ajuda
     else if (comando === '/ajuda' || comando === '/start') {
       let ajuda = `🤖 <b>ASSISTENTE OPERACIONAL</b>\n\n`;
       ajuda += `🔎 <code>/busca [nº] [data]</code> - Detalhes precisos\n`;
@@ -63,7 +80,7 @@ function doPost(e) {
 }
 
 /************************************************************
- * 8.6 FUNÇÕES DE PESQUISA NA BASE
+ * 8.7 FUNÇÕES DE PESQUISA NA BASE
  ************************************************************/
 
 // Busca por ID Único (Número + Data)

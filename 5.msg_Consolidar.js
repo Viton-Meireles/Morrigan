@@ -75,26 +75,45 @@ function consolidarChamados() {
 }
 
 /************************************************************
- * 5.1. msg_Consolidar (PARTE 2: Enviar Mensagem Consolidada)
+ * 5. msg_Consolidar (PARTE 2: Enviar Mensagem Consolidada)
  * Painel de Controle Vivo (Novos + Agendados + Alertas)
  ************************************************************/
 
-function msg_Consolidar() {
+function msg_Consolidar(dataEspecifica) {
   const sheetBase = sh(CONFIG.BASE);
   const dados = sheetBase.getDataRange().getValues();
   if (dados.length <= 1) return;
 
-  // Usa o Utilities direto para não ter risco de erro na data/hora atual
+  // Relógio do Sistema (Para registrar QUANDO a mensagem foi enviada)
   const agoraObj = new Date();
   const fuso = Session.getScriptTimeZone();
-  const hoje = Utilities.formatDate(agoraObj, fuso, 'dd/MM/yyyy');
-  const agora = `${hoje} às ${Utilities.formatDate(agoraObj, fuso, 'HH:mm')}`;
+  const dataHojeSistema = Utilities.formatDate(agoraObj, fuso, 'dd/MM/yyyy');
+  const agora = `${dataHojeSistema} às ${Utilities.formatDate(agoraObj, fuso, 'HH:mm')}`;
 
-  // 5.2 FILTRAGEM: Ocorrências de Hoje OU Agendadas para Hoje
+  // 5.1 LÓGICA DA DATA DE REFERÊNCIA (Efeito Cinderela resolvido)
+  let dataAlvo = dataEspecifica;
+
+  // Se o disparo veio automático do formulário (sem data específica pedida)
+  if (!dataAlvo) {
+    let maxUpdate = 0;
+    dados.slice(1).forEach(r => {
+      const dataAtualizacao = new Date(r[22]).getTime(); // Coluna W (Última Atualização)
+      if (dataAtualizacao > maxUpdate) {
+        maxUpdate = dataAtualizacao;
+        // Pega a Data de Abertura (Col C) do chamado mais recente que foi editado
+        dataAlvo = formatar.data(r[2]); 
+      }
+    });
+  }
+  
+  // Fallback de segurança
+  if (!dataAlvo) dataAlvo = dataHojeSistema;
+
+  // 5.2 FILTRAGEM: Ocorrências da DATA ALVO (Abertos nela OU Agendados para ela)
   const chamadosDoDia = dados.slice(1).filter(r => {
     const dataAbertura = formatar.data(r[2]); // Coluna C
     const dataAgendada = formatar.data(r[15]); // Coluna P
-    return (dataAbertura === hoje || dataAgendada === hoje);
+    return (dataAbertura === dataAlvo || dataAgendada === dataAlvo);
   });
 
   // 5.3 ESTATÍSTICAS
@@ -123,15 +142,14 @@ function msg_Consolidar() {
     grupos[nomeLimpo].push(r);
   });
 
-  // 5.5 CABEÇALHO DA MENSAGEM
+  // 5.5 CABEÇALHO DA MENSAGEM (Com o novo campo de Referência)
   let msg = `📊 <b>COMPILADO DE CHAMADOS</b>\n`;
-  msg += `Última atualização: ${agora}\n\n`;
+  msg += `📅 <b>Referência:</b> ${dataAlvo}\n`;
+  msg += `<i>Última atualização: ${agora}</i>\n\n`;
   
   msg += `<b>TOTAL DE CHAMADOS:</b> ${total}\n`;
-  msg += `✅ Atendidos: ${atendidos}\n`;
-  msg += `⏳ Pendentes: ${pendentes}\n`;
-  msg += `📅 Agendados: ${agendados}\n`;
-  msg += `❌ Cancelados: ${cancelados}\n`;
+  msg += `✅ Atendidos: ${atendidos}  ⏳ Pendentes: ${pendentes}\n`;
+  msg += `📅 Agendados: ${agendados}  ❌ Cancelados: ${cancelados}\n`;
   msg += `──────────────────\n`;
 
   // 5.6 CORPO POR CATEGORIA E DETALHES DO CHAMADO
@@ -140,7 +158,6 @@ function msg_Consolidar() {
     msg += `${emoji} | <b>${categoria.toUpperCase()}:</b>\n\n`;
     
     grupos[categoria].forEach(r => {
-      // Mapeamento das colunas da BASE_CONSOLIDADA
       const chamadoNum = r[1]; // Coluna B
       const statusTxt = String(r[3]); // Coluna D
       const logradouro = r[7] || 'Logradouro não informado'; // Coluna H
@@ -148,11 +165,9 @@ function msg_Consolidar() {
       const numFinal = (numRaw === '00' || numRaw === '' || numRaw === 'undefined') ? 's/n' : numRaw;
       const bairro = r[9] || 'Bairro não informado'; // Coluna J
       
-      // Tratamento seguro do relato (Contra o erro do HTML no Telegram)
       let relatoSeguro = String(r[14] || 'Sem observações.').trim(); // Coluna O
       relatoSeguro = relatoSeguro.replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-      // Lógica Dinâmica de Status, Tempo e Ação
       let statusEmoji = '⏳';
       let acao = 'Aguardando atendimento em';
       let dataOcorrencia = `${formatar.data(r[2])} às ${formatar.hora(r[2])}`; // Padrão: Abertura
@@ -172,7 +187,6 @@ function msg_Consolidar() {
         acao = 'Cancelado';
       }
 
-      // Montagem do bloco idêntico ao planejado
       msg += `↳ <b>Chamado: ${chamadoNum}</b>\n`;
       msg += `📍 ${logradouro}, ${numFinal} - ${bairro}\n`;
       msg += `🧭 Status: ${statusEmoji} ${statusTxt}\n`;
@@ -184,9 +198,10 @@ function msg_Consolidar() {
 
   // 5.7 TRATAMENTO CASO NÃO HAJA MOVIMENTO NO DIA
   if (total === 0) {
-    msg = `📊 <b>COMPILADO DE CHAMADOS</b>\n\n` +
-          `‼️ <b>Não há demandas registradas ou agendadas para hoje.</b>\n` +
-          `📅 <i>${hoje}</i>`;
+    msg = `📊 <b>COMPILADO DE CHAMADOS</b>\n`;
+    msg += `📅 <b>Referência:</b> ${dataAlvo}\n\n`;
+    msg += `‼️ <b>Não há demandas registradas ou agendadas para esta data.</b>\n`;
+    msg += `<i>Atualizado em: ${agora}</i>`;
   }
 
   enviarTelegram(CONFIG.TELEGRAM.CHATS.COMPILADO, msg);
