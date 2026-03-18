@@ -124,18 +124,25 @@ function notificarCampo(v) {
   // --- TRATAMENTOS DE DADOS ---
   const numRaw = get('numero_do_endereco_confirmado');
   const numFinal = (numRaw === '00' || numRaw === '') ? 'S/N' : numRaw;
-    // Função interna para tratar o erro da data 1969
+  
   const formatarDataHora = (valor) => {
     if (!valor) return 'Não informado';
-    // Se a data vier no formato dd/MM/yyyy, o script pode falhar. 
-    // Vamos garantir que o formatar.data e hora recebam um valor limpo.
     return `${formatar.data(valor)} às ${formatar.hora(valor)}`;
   };
-// Formatar a equipe para ficar "Nome 1 | Nome 2" ao invés de "Nome 1, Nome 2"
+
   const equipeLista = get('equipe').replace(/, /g, ' | ');
   const status = get('status_atual');
-// --- BLOCO 1: STATUS DA VIA (Só aparece se houver interdição/obstrução) ---
-  const statusVia = get('status_da_via'); // Ex: 'Interditada Total' ou 'Obstruída Parcial'
+
+  // --- INICIALIZAÇÃO DA MENSAGEM (Sempre no topo!) ---
+  // Ajuste: Use 'Número do Chamado' exatamente como está no cabeçalho da sua planilha de CAMPO
+  let msg = `✅ <b>ATUALIZAÇÃO DE OCORRÊNCIA</b>\n\n`;
+  msg += `<b>📄 CHAMADO ${get('Número do Chamado')}</b>\n`; 
+  msg += `📅 <b>Data:</b> ${get('data_do_chamado')}\n`;
+  msg += `📍 <b>Endereço:</b> ${get('logradouro_confirmado')}, nº ${numFinal} - ${get('bairro_confirmado')}\n`;
+  msg += `👷 <b>Equipe:</b> ${equipeLista}\n\n`;
+
+  // --- BLOCO 1: STATUS DA VIA ---
+  const statusVia = get('status_da_via');
   if (statusVia && statusVia !== 'Liberada') {
     msg += `<blockquote>🚧 <b>VIA: ${statusVia.toUpperCase()}</b>\n`;
     if (get('detalhes_via')) msg += `<i>Nota: ${get('detalhes_via')}</i>\n`;
@@ -143,8 +150,7 @@ function notificarCampo(v) {
   }
 
   // --- BLOCO 2: VÍTIMAS ---
-  const temVitimas = get('ha_vitimas') === 'Sim';
-  if (temVitimas) {
+  if (get('ha_vitimas') === 'Sim') {
     msg += `<blockquote>⚠️ <b>VÍTIMAS CONFIRMADAS</b>\n`;
     msg += `• Quantidade: ${get('quantidade_vitimas') || 'Não informada'}\n`;
     msg += `</blockquote>\n`;
@@ -158,33 +164,24 @@ function notificarCampo(v) {
   }
 
   // --- BLOCO 4: ENCAMINHAMENTOS ---
-  const orgaos = get('encaminhamento_orgaos'); // Ex: 'Bombeiros, CEMIG'
+  const orgaos = get('encaminhamento_orgaos');
   if (orgaos) {
     msg += `<blockquote>🏢 <b>DIRECIONAMENTO:</b>\n`;
     msg += `• Acionado: ${orgaos.replace(/, /g, ' | ')}\n`;
     msg += `</blockquote>\n`;
   }
 
-  let msg = `✅ <b>ATUALIZAÇÃO DE OCORRÊNCIA</b>\n\n`;
-  msg += `<b>📄 CHAMADO ${get('numero_do_chamado')}</b>\n`;
-  msg += `📅 <b>Data:</b> ${get('data_do_chamado')}\n`;
-  msg += `📍 <b>Endereço:</b> ${get('logradouro_confirmado')}, nº ${numFinal} - ${get('bairro_confirmado')}\n`;
-  msg += `👷 <b>Equipe:</b> ${equipeLista}\n\n`;
-
   // --- LÓGICA POR STATUS ---
-
   if (status.includes('Atendido')) {
     msg += `📝 <b>Status:</b> ✅ Atendido\n`;
     msg += `⏰ <b>Atendido em</b> ${formatarDataHora(get('data_hora_atendimento'))}\n`;
     msg += `🧭 <b>Tipologia confirmada:</b> ${get('tipologia_confirmada')}\n`;
     msg += `↳ 📝 <b>Relato:</b> ${get('resumo_de_campo')}\n\n`;
   } 
-  
   else if (status.includes('Cancelado')) {
     msg += `📝 <b>Status:</b> ❌ Cancelado\n`;
     msg += `↳ <b>Motivo:</b> ${get('descreva_o_cancelamento') || 'Não informado'}\n\n`;
   } 
-  
   else if (status.includes('Agendado')) {
     msg += `📝 <b>Status:</b> 🕒 Agendado\n`;
     msg += `⏰ <b>Previsão:</b> ${formatarDataHora(get('data_hora_agendamento'))}\n`;
@@ -202,13 +199,14 @@ function notificarCampo(v) {
 function consolidarChamados() {
   const sheetBase = sh(CONFIG.BASE);
   
-  // 1. Criar Cabeçalho se estiver vazio (23 colunas - A até W)
+  // 1. Criar Cabeçalho se estiver vazio (Agora com 24 colunas - A até X)
   if (!sheetBase.getLastRow()) {
     sheetBase.appendRow([
       'ID_UNICO', 'Nº Chamado', 'Data Abertura', 'Status Atual', 'Tipologia', 'Subtipo', 
       'Origem', 'Logradouro', 'Nº', 'Bairro', 'Solicitante', 'Telefone', 
       'Equipe', 'Data Atend.', 'Relato de Campo', 'Agendamento', 'Turno', 
-      'Motivo Agend/Canc', 'Doação', 'Itens Doados', 'Notificado', 'Órgãos Acionados', 'Última Atualização'
+      'Motivo Agend/Canc', 'Doação', 'Itens Doados', 'Notificado', 'Órgãos Acionados', 
+      'Última Atualização', 'Complemento Confirmado' // <- Adicionado aqui no final (Col X)
     ]);
   }
 
@@ -216,29 +214,27 @@ function consolidarChamados() {
   const mapaBase = new Map();
   dataBase.forEach((l, i) => { if (i > 0 && l[0]) mapaBase.set(String(l[0]), i + 1); });
 
-  // --- PARTE A: PROCESSAR ABERTURAS (Planilha Abertura A-Y) ---
+  // --- PARTE A: PROCESSAR ABERTURAS ---
   const dAb = sh(CONFIG.ABERTURA).getDataRange().getValues();
   const novas = [];
   for (let i = 1; i < dAb.length; i++) {
     const id = formatar.id(dAb[i][2], dAb[i][3]);
     if (id && !mapaBase.has(id)) {
-      // Subtipos estão entre as colunas R(17) e Y(24)
       const subtipo = dAb[i].slice(17, 25).find(v => v) || 'Não informado';
       
-      // Linha inicial da abertura (23 colunas para bater com o cabeçalho)
+      // Adicionado mais um espaço vazio '' no final para bater com as 24 colunas
       novas.push([
         id, dAb[i][2], formatar.data(dAb[i][3]), dAb[i][5], dAb[i][15], subtipo,
         dAb[i][6], dAb[i][7], dAb[i][8], dAb[i][10], dAb[i][12], dAb[i][13],
-        '', '', '', '', '', '', '', '', '', '', new Date()
+        '', '', '', '', '', '', '', '', '', '', new Date(), '' 
       ]);
       mapaBase.set(id, -1);
     }
   }
   if (novas.length) sheetBase.getRange(sheetBase.getLastRow()+1, 1, novas.length, novas[0].length).setValues(novas);
 
-  // --- PARTE B: ATUALIZAR COM DADOS DE CAMPO (Mapeamento Campo A-AA) ---
+  // --- PARTE B: ATUALIZAR COM DADOS DE CAMPO ---
   const dCp = sh(CONFIG.CAMPO).getDataRange().getValues();
-  // Recarregar o mapa para incluir os novos registros da Parte A
   const dataBaseAtual = sheetBase.getDataRange().getValues();
   const mapaAtual = new Map();
   dataBaseAtual.forEach((l, i) => { if(i > 0 && l[0]) mapaAtual.set(String(l[0]), i + 1); });
@@ -267,13 +263,17 @@ function consolidarChamados() {
       sheetBase.getRange(linha, 21).setValue(dCp[i][11]); // U: Nome Notificado (Col L)
       sheetBase.getRange(linha, 22).setValue(dCp[i][9]);  // V: Órgão que acionou (Col J)
       sheetBase.getRange(linha, 23).setValue(new Date()); // W: Última Atualização
+      
+      // NOVA LINHA: Gravando o Complemento na Coluna 24 (X)
+      // dCp[i][17] assume que o complemento está na Coluna R da planilha 'relatorio_em_campo'
+      sheetBase.getRange(linha, 24).setValue(dCp[i][17]); 
     }
   }
 }
 
 /************************************************************
  * 5. msg_Consolidar (PARTE 2: Enviar Mensagem Consolidada)
- * Painel de Controle Vivo (Novos + Agendados + Alertas)
+ * Painel de Controle Vivo e Inteligente
  ************************************************************/
 
 function msg_Consolidar(dataEspecifica) {
@@ -281,128 +281,126 @@ function msg_Consolidar(dataEspecifica) {
   const dados = sheetBase.getDataRange().getValues();
   if (dados.length <= 1) return;
 
-  // Relógio do Sistema (Para registrar QUANDO a mensagem foi enviada)
+  // --- OBJETOS DE TEMPO ---
+  // O objeto 'Date()' captura o momento exato da execução.
+  // 'Utilities.formatDate' evita o bug de datas em inglês (Tue Mar...) transformando em texto BR.
   const agoraObj = new Date();
   const fuso = Session.getScriptTimeZone();
   const dataHojeSistema = Utilities.formatDate(agoraObj, fuso, 'dd/MM/yyyy');
-  const agora = `${dataHojeSistema} às ${Utilities.formatDate(agoraObj, fuso, 'HH:mm')}`;
+  const agoraStr = `${dataHojeSistema} às ${Utilities.formatDate(agoraObj, fuso, 'HH:mm')}`;
 
-  // 5.1 LÓGICA DA DATA DE REFERÊNCIA (Efeito Cinderela resolvido)
+  // --- 5.1 DEFINIÇÃO DA DATA ALVO ---
+  // Se a função recebeu uma data (do formulário), ela usa essa. 
+  // Se não (disparo manual), ela busca o último chamado editado na Coluna W (índice 22).
   let dataAlvo = dataEspecifica;
 
-  // Se o disparo veio automático do formulário (sem data específica pedida)
   if (!dataAlvo) {
     let maxUpdate = 0;
     dados.slice(1).forEach(r => {
-      const dataAtualizacao = new Date(r[22]).getTime(); // Coluna W (Última Atualização)
-      if (dataAtualizacao > maxUpdate) {
-        maxUpdate = dataAtualizacao;
-        // Pega a Data de Abertura (Col C) do chamado mais recente que foi editado
-        dataAlvo = formatar.data(r[2]); 
+      const timeUpdate = new Date(r[22]).getTime(); 
+      if (timeUpdate > maxUpdate) {
+        maxUpdate = timeUpdate;
+        dataAlvo = formatar.data(r[2]); // Pega a data de abertura do chamado mais recente
       }
     });
   }
   
-  // Fallback de segurança
   if (!dataAlvo) dataAlvo = dataHojeSistema;
 
-  // 5.2 FILTRAGEM: Ocorrências da DATA ALVO (Abertos nela OU Agendados para ela)
+  // --- 5.2 FILTRAGEM (O método .filter cria uma lista apenas com o que interessa) ---
   const chamadosDoDia = dados.slice(1).filter(r => {
     const dataAbertura = formatar.data(r[2]); // Coluna C
     const dataAgendada = formatar.data(r[15]); // Coluna P
+    // Retorna 'true' se o chamado nasceu no dia alvo OU foi agendado para ele
     return (dataAbertura === dataAlvo || dataAgendada === dataAlvo);
   });
-  
-  // 5.3 ESTATÍSTICAS
+
+  // --- 5.3 ESTATÍSTICAS ---
   const total = chamadosDoDia.length;
   const atendidos = chamadosDoDia.filter(r => String(r[3]).includes('Atendido')).length;
   const cancelados = chamadosDoDia.filter(r => String(r[3]).includes('Cancelado')).length;
   const agendados = chamadosDoDia.filter(r => String(r[3]).includes('Agendado')).length;
   const pendentes = total - atendidos - cancelados - agendados;
 
-  // 5.4 MAPA DE ÍCONES E AGRUPAMENTO
-  const icones = {
-    'Arbóreo': '🌳',
-    'Acidente viário': '🚧',
-    'Estrutural': '🏚️',
-    'Geológico': '⛰️',
-    'Hidrológico': '🌊',
-    'Incêndio': '🔥',
-    'Entrega de doação': '🎁'
-  };
+  // --- 5.4 MAPA DE ÍCONES ---
+  const icones = { 'Arbóreo': '🌳', 'Acidente viário': '🚧', 'Estrutural': '🏚️', 'Geológico': '⛰️', 'Hidrológico': '🌊', 'Incêndio': '🔥', 'Entrega de doação': '🎁' };
+  const grupos = {}; 
 
-  const grupos = {};
   chamadosDoDia.forEach(r => {
     const tipologiaBruta = r[4] || 'Outros'; 
+    // A Regex abaixo remove emojis do nome da categoria para não dar erro no agrupamento
     const nomeLimpo = tipologiaBruta.replace(/[^\w\sÀ-ú]/g, '').trim();
     if (!grupos[nomeLimpo]) grupos[nomeLimpo] = [];
     grupos[nomeLimpo].push(r);
   });
 
-// 5.5 CABEÇALHO DA MENSAGEM (Com o novo campo de Referência)
+  // --- 5.5 CABEÇALHO DA MENSAGEM ---
   let msg = `📊 <b>COMPILADO DE CHAMADOS</b>\n`;
-  msg += `📅 <b>Referência:</b> ${dataAlvo}\n`;
-  msg += `<i>Última atualização: ${agora}</i>\n\n`;
+  msg += `📅 <b>Referência:</b> ${dataAlvo}\n`; 
+  msg += `<i>Última atualização: ${agoraStr}</i>\n\n`;
   
   msg += `<b>TOTAL DE CHAMADOS:</b> ${total}\n`;
   msg += `✅ Atendidos: ${atendidos}  ⏳ Pendentes: ${pendentes}\n`;
   msg += `📅 Agendados: ${agendados}  ❌ Cancelados: ${cancelados}\n`;
   msg += `──────────────────\n`;
 
-  // 5.6 CORPO POR CATEGORIA E DETALHES DO CHAMADO
+  // --- 5.6 CORPO POR CATEGORIA ---
   for (const categoria in grupos) {
     const emoji = icones[categoria] || '📋';
     msg += `${emoji} | <b>${categoria.toUpperCase()}:</b>\n\n`;
     
     grupos[categoria].forEach(r => {
-      // Mapeamento das colunas da BASE_CONSOLIDADA
       const chamadoNum = r[1]; // Coluna B
-      const statusTxt = String(r[3]); // Coluna D
-      const logradouro = r[7] || 'Logradouro não informado'; // Coluna H
-      const numRaw = String(r[8]); // Coluna I
-      const numFinal = (numRaw === '00' || numRaw === '' || numRaw === 'undefined') ? 's/n' : numRaw;
-      const bairro = r[9] || 'Bairro não informado'; // Coluna J
+      const statusRaw = String(r[3] || ''); // Coluna D (pode vir com emoji do Forms)
       
-      // Tratamento seguro do relato (Contra o erro do HTML no Telegram)
-      let relatoSeguro = String(r[14] || 'Sem observações.').trim(); // Coluna O
-      relatoSeguro = relatoSeguro.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      // LIMPEZA DE STATUS: Remove emojis e troca o texto longo por 'Pendente'
+      const statusLimpo = statusRaw.replace(/[^\w\sÀ-ú]/g, '').replace('Aguardando atendimento', 'Pendente').trim();
 
-      // Lógica Dinâmica de Status, Tempo e Ação
+// ... (dentro de grupos[categoria].forEach)
+      const logradouro = r[7] || 'Não informado'; 
+      const numRaw = String(r[8]);
+      const numFinal = (numRaw === '00' || numRaw === '' || numRaw === 'undefined') ? 's/n' : numRaw;
+      
+      // PUXANDO O COMPLEMENTO DA COLUNA X (Índice 23)
+      const compRaw = String(r[23] || '').trim();
+      const complemento = (compRaw && compRaw !== 'undefined') ? ` – <i>${compRaw}</i>` : ''; 
+      
+      const bairro = r[9] || 'Não informado'; 
+      // ... (restante do código)
+      
+      // HTML ESCAPE: Impede que caracteres como '<' quebrem a mensagem do Telegram
+      let relatoSeguro = String(r[14] || 'Sem observações.').trim().replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+      // LÓGICA DINÂMICA DE STATUS E TEMPO
       let statusEmoji = '⏳';
-      let acao = 'Aguardando atendimento em';
-      let dataOcorrencia = `${formatar.data(r[2])} às ${formatar.hora(r[2])}`; // Padrão: Abertura
+      let acao = 'Pendente desde'; 
+      let tempoRef = `${formatar.data(r[2])} às ${formatar.hora(r[2])}`; // Horário de Abertura (Coluna C)
 
-      if (statusTxt.includes('Atendido')) {
+      if (statusRaw.includes('Atendido')) {
         statusEmoji = '✅';
         acao = 'Atendido em';
-        if (r[13]) dataOcorrencia = `${formatar.data(r[13])} às ${formatar.hora(r[13])}`; // Usa Data Atend (N)
-      } 
-      else if (statusTxt.includes('Agendado')) {
+        tempoRef = `${formatar.data(r[13])} às ${formatar.hora(r[13])}`; // Horário de Atendimento (Coluna N)
+      } else if (statusRaw.includes('Agendado')) {
         statusEmoji = '📅';
         acao = 'Agendado para';
-        if (r[15]) dataOcorrencia = formatar.data(r[15]); // Usa Data Agendamento (P)
-      }
-      else if (statusTxt.includes('Cancelado')) {
+        tempoRef = formatar.data(r[15]); // Data do Agendamento (Coluna P)
+      } else if (statusRaw.includes('Cancelado')) {
         statusEmoji = '❌';
         acao = 'Cancelado';
       }
 
-      // Montagem do bloco idêntico ao planejado
       msg += `↳ <b>Chamado: ${chamadoNum}</b>\n`;
-      msg += `📍 ${logradouro}, ${numFinal} - ${bairro}\n`;
-      msg += `🧭 Status: ${statusEmoji} ${statusTxt}\n`;
-      msg += `⏰ ${acao} ${dataOcorrencia}\n`;
+      msg += `📍 ${logradouro}, ${numFinal}${complemento} - ${bairro}\n`;
+      msg += `🧭 Status: ${statusEmoji} ${statusLimpo}\n`;
+      msg += `⏰ ${acao} ${tempoRef}\n`;
       msg += `📄 Relato em campo: <i>${relatoSeguro}</i>\n`;
       msg += `──────────────────\n`;
     });
   }
 
-  // 5.7 TRATAMENTO CASO NÃO HAJA MOVIMENTO NO DIA
+  // --- 5.7 TRATAMENTO PARA DATA VAZIA ---
   if (total === 0) {
-    msg = `📊 <b>COMPILADO DE CHAMADOS</b>\n`;
-    msg += `📅 <b>Referência:</b> ${dataAlvo}\n\n`;
-    msg += `‼️ <b>Não há demandas registradas ou agendadas para esta data.</b>\n`;
-    msg += `<i>Atualizado em: ${agora}</i>`;
+    msg = `📊 <b>COMPILADO DE CHAMADOS</b>\n📅 <b>Referência:</b> ${dataAlvo}\n\n‼️ <b>Sem demandas para esta data.</b>`;
   }
 
   enviarTelegram(CONFIG.TELEGRAM.CHATS.COMPILADO, msg);
