@@ -1,16 +1,16 @@
-Falta add -> Kit limpeza //em tipo_doacao
+Falta add -> Kit limpeza //em tipo_doacao ✅
 
 Falta add -> Assitência Social //em who_acionou
 
 Consertar compilado, não computou todos os chamados //identificar o pq
 
-Redefinir data "⏰ Pendente desde 18/03/2026 às 00:00" // LÓGICA DINÂMICA DE STATUS E TEMPO
+Redefinir data "⏰ Pendente desde 18/03/2026 às 00:00" // LÓGICA DINÂMICA DE STATUS E TEMPO ✅
 
 Adicionar os comandos do BOT funcionais
 
 Verificar o pq dos comandos no Bot aparecem com o nome do BOT //queremos ocultar isso: /status@defesacivil_chamados_bot
 
-Separar qual chamado entra em cada grupo. Dividir entre equipe Operacional e Equipe Técnica
+Separar qual chamado entra em cada grupo. Dividir entre equipe Operacional e Equipe Técnica 
 
 Gerar automaticamente tabela de entrega de doações a serem realizadas //pensar como funcionaria isso
 
@@ -22,4 +22,13 @@ RESUMO: FIM DE TURNO //adicionar mais informações estatisticas como qts por ti
 oq foi encaminhado para auxilio habitacional, qts ocorrências surgiram a partir daquela,
 necessário demolir algum imóvel, qtd de ajuda humanitária entregue 
 
-Criar canal para respostas imediatas e estatisticas, envio de /comandos e relatorios resumidos
+Criar canal para respostas imediatas e estatisticas, envio de /comandos e relatorios resumidos ✅
+
+//importante: msg de agendados do dia devem incluir todos os chamados que
+estão com status pendente de outros dias e ir atualizando conforme o status mudar
+
+Possibilidade de registrar demanda avulsa em campo 
+
+Uma ressalva q preciso que me lembre caso eu esqueça: adicionar comando de transferir
+chamado do grupo técnico para operacional e vice versa 
+
