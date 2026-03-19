@@ -22,6 +22,7 @@ RESUMO: FIM DE TURNO //adicionar mais informações estatisticas como qts por ti
 oq foi encaminhado para auxilio habitacional, qts ocorrências surgiram a partir daquela,
 necessário demolir algum imóvel, qtd de ajuda humanitária entregue 
 
+<<<<<<< HEAD
 Criar canal para respostas imediatas e estatisticas, envio de /comandos e relatorios resumidos ✅
 
 //importante: msg de agendados do dia devem incluir todos os chamados que
@@ -32,3 +33,10 @@ Possibilidade de registrar demanda avulsa em campo
 Uma ressalva q preciso que me lembre caso eu esqueça: adicionar comando de transferir
 chamado do grupo técnico para operacional e vice versa 
 
+=======
+Criar canal para respostas imediatas e estatisticas, envio de /comandos e relatorios resumidos
+
+Criar comando /detalhar que irá se habilitar após a mensagem de chamados pendentesOP ou pendenteT
+
+Retirar confirmação de solicitante quando o chamado for agendado
+>>>>>>> 6e38d913da7ef532424c1ccf3857b5a5c2720491
