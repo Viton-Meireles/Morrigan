@@ -31,6 +31,11 @@ function rotearFormulario(e) {
     msg_InfoFast(); // Gera a estatística rápida
   }
 
+  // NOVA LÓGICA: Monitoramento de Vias
+  else if (nomeAba === CONFIG.VIAS) {
+    notificarStatusVia(dados);
+  }
+
   else if (nomeAba === 'aba_avulsos') { // Nome do seu 3º formulário
     const setor = get('Setor Responsável'); // Ideal ter esse campo (OP ou TEC)
     const destino = (setor === 'Operacional') ? CONFIG.TELEGRAM.CHATS.AVULSO_OP : CONFIG.TELEGRAM.CHATS.AVULSO_TEC;

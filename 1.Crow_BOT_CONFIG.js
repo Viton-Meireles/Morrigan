@@ -7,7 +7,8 @@ const CONFIG = {
   BASE: 'BASE_CONSOLIDADA',
   ESCALA: 'Escala_diaria_2026',
   STATUS_PADRAO: 'Aguardando atendimento',
-  TELEGRAM: {
+  VIAS: 'status_de_vias',
+  TELEGRAM: { //IDs para o BOT do Telegram
     TOKEN: '8237808044:AAHJf09271f0oPL88_nFXCmoWRqdu6TIxHU',
     CHATS: { //GP = GRUPO
       /*PARTE 1 - NOVOS CHAMADOS | Todos chegam para o Setor de Entrada e são separados por equipe nos outros 2 grupos*/

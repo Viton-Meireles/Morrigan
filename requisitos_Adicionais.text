@@ -10,31 +10,31 @@ Adicionar os comandos do BOT funcionais
 
 Verificar o pq dos comandos no Bot aparecem com o nome do BOT //queremos ocultar isso: /status@defesacivil_chamados_bot
 
-Separar qual chamado entra em cada grupo. Dividir entre equipe Operacional e Equipe Técnica 
+Separar qual chamado entra em cada grupo. Dividir entre equipe Operacional e Equipe Técnica ✅
 
 Gerar automaticamente tabela de entrega de doações a serem realizadas //pensar como funcionaria isso
 
-Criar comando /pendentesOP e /pendenteT //Em cada um analisa os chamados do dia, 
+Criar comando /pendentesOP e /pendenteT //Em cada um analisa os chamados do dia, ✅
 os chamados agendados para outros dias e separa em duas mensagens informando 
 oq é Operacional e oq é Técnica;
 
-RESUMO: FIM DE TURNO //adicionar mais informações estatisticas como qts por tipologia,
+RESUMO: FIM DE TURNO //adicionar mais informações estatisticas como qtd por tipologia,
 oq foi encaminhado para auxilio habitacional, qts ocorrências surgiram a partir daquela,
-necessário demolir algum imóvel, qtd de ajuda humanitária entregue 
-
+necessário demolir algum imóvel, qtd de ajuda humanitária entregue, ✅
+    
 <<<<<<< HEAD
 Criar canal para respostas imediatas e estatisticas, envio de /comandos e relatorios resumidos ✅
 
 //importante: msg de agendados do dia devem incluir todos os chamados que
 estão com status pendente de outros dias e ir atualizando conforme o status mudar
 
-Possibilidade de registrar demanda avulsa em campo 
+Possibilidade de registrar demanda avulsa em campo ✅
 
 Uma ressalva q preciso que me lembre caso eu esqueça: adicionar comando de transferir
-chamado do grupo técnico para operacional e vice versa 
+chamado do grupo técnico para operacional e vice versa ✅
 
 =======
-Criar canal para respostas imediatas e estatisticas, envio de /comandos e relatorios resumidos
+Criar canal para respostas imediatas e estatisticas, envio de /comandos e relatorios resumidos ✅
 
 Criar comando /detalhar que irá se habilitar após a mensagem de chamados pendentesOP ou pendenteT
 
