@@ -1,5 +1,20 @@
 /************************************************************
- * 1. CONFIGURAÇÕES E UTILITÁRIOS | (atualizado em: 16/03/2026 - 13:15)
+ * SISTEMA DE GESTÃO - DEFESA CIVIL (C2)
+ * Atualizado em: 20/03/2026
+ * Comandante/Dev: Mestre Viton
+ * * ARQUITETURA DO SISTEMA:
+ * - Camada 1: Utilitários e Configurações Globais
+ * - Camada 2: Roteador (Ouve os formulários e decide para onde vai)
+ * - Camada 3: Formatadores de Mensagens (Visual do Telegram)
+ * - Camada 4: Motor de Consolidação (O "Trator" da Base Master)
+ * - Camada 5: Relatórios e Compilados (Estatísticas e Fechamentos)
+ * - Camada 6: Gestão de Escala (Com sistema anti-spam/debounce)
+ * - Camada 7: Bot do Telegram (Webhook e Interação via comandos)
+ ************************************************************/
+
+/************************************************************
+ * 1. CONFIGURAÇÕES E UTILITÁRIOS GLOBAIS
+ * Centraliza todas as chaves e IDs para facilitar a manutenção.
  ************************************************************/
 const CONFIG = {
   ABERTURA: 'abertura_de_chamado', 
@@ -8,47 +23,41 @@ const CONFIG = {
   ESCALA: 'Escala_diaria_2026',
   STATUS_PADRAO: 'Aguardando atendimento',
   VIAS: 'status_de_vias',
-  TELEGRAM: { //IDs para o BOT do Telegram
-    TOKEN: '8237808044:AAHJf09271f0oPL88_nFXCmoWRqdu6TIxHU',
-    CHATS: { //GP = GRUPO
-      /*PARTE 1 - NOVOS CHAMADOS | Todos chegam para o Setor de Entrada e são separados por equipe nos outros 2 grupos*/
-      ENTRADA: '-1003862323760', // ANTES -> ABERTURA //TODOS OS CHAMADOS NOVOS P/ GP SETOR DE ENTRADA
-      NEW_OPERACIONAL: '-5193056344', //GP CAMPO //CHAMADO NOVOS P/ OPERACIONAL
-      NEW_TECNICA: '-5256034455', //GP CHAMADO NOVOS P/ TÉCNICA
-      /*PARTE 2 - Compilado e grupo para informações rápidas (tipo estatisticas)*/
-      COMPILADO: '-1003750376669', //GP COMPILADO DEFESA CIVIL
-      INFO_FAST: '-5199963816', //GP iNFORMAÇÕES RÁPIDAS
-      /*PARTE 3 - Chamados criados em campo por cada equipe, servirá como controle interno tbm*/
-      AVULSO_OP: '-5068971586', //GP CHAMADOS CRIADOS INLOCO OPERACIONAL
-      AVULSO_TEC: '-5244563273', //GP CHAMADOS CRIADOS INLOCO TÉCNICA
-      /*PARTE 4 - Chamados atendidos em campo*/
-      CAMPO: '-1003815316144' //GP CHAMADOS ATENDIDOS EM CAMPO - OPERACIONAL OU TÉCNICA
+  TELEGRAM: { 
+    TOKEN: '8237808044:AAHJf09271f0oPL88_nFXCmoWRqdu6TIxHU', // Chave de acesso fornecida pelo BotFather
+    CHATS: { 
+      ENTRADA: '-1003862323760',         // Recebe TUDO (Triagem Inicial)
+      NEW_OPERACIONAL: '-5193056344', // Filtro: Arbóreo e Doação
+      NEW_TECNICA: '-5256034455',     // Filtro: Estrutural, Geológico, etc
+      COMPILADO: '-1003750376669',       // Painel de andamento do dia
+      INFO_FAST: '-5199963816',       // Alertas de Vias e Resumos Rápidos
+      AVULSO_OP: '-5068971586',       // Demandas In Loco Operacional
+      AVULSO_TEC: '-5244563273',      // Demandas In Loco Técnica
+      CAMPO: '-1003815316144'            // Informes de baixa/término de ocorrência
     }
   }
 };
 
+// Função curta para chamar planilhas rapidamente: sh('Nome_da_Aba')
 const sh = (nome) => SpreadsheetApp.getActive().getSheetByName(nome);
 
-  // Recebe "13/03/2026 16:17:00" -> Devolve "13/03/2026"
+// MOTOR DE FORMATAÇÃO: Corrige bugs de fuso horário do Google (ex: erro de 1969)
 const formatar = {
   data: (v) => {
     if (!v || v == 'Não informado') return 'Não informado';
-    // Se for um objeto de data real, formata para texto BR
+    // Se o Google entender como Data nativa, formata. Se vier como texto (do Forms), corta a hora.
     if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), 'dd/MM/yyyy');
     return String(v).split(' ')[0];
   },
-// Recebe "13/03/2026 16:17:00" -> Devolve "16:17"
   hora: (v) => {
     if (!v || v == '00:00') return '---';
     if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), 'HH:mm');
     let s = String(v);
-    let p = s.includes(' ') ? s.split(' ')[1] : s;
-    return p.split(':').slice(0,2).join(':'); // Pega só HH:mm
-  }
-};
-
-  // ID único para a BASE_CONSOLIDADA
- id: (n, d) => {
+    let p = s.includes(' ') ? s.split(' ')[1] : s; // Separa a data da hora se vierem juntos
+    return p.split(':').slice(0,2).join(':'); // Garante que retorne apenas HH:mm
+  },
+  id: (n, d) => {
+    // Cria uma "Identidade Única" para a Base Master. Ex: "15_20260320" (Nº + Data Invertida)
     if (!n || !d) return null;
     let dataLimpa = '';
     if (d instanceof Date) {
@@ -59,24 +68,26 @@ const formatar = {
     let dataIso = s.length === 3 ? s[2] + s[1] + s[0] : '00000000';
     return `${n}_${dataIso}`;
   }
+};
 
-  /************************************************************
- * 2. ROTEADOR (O que o seu Acionador de Formulário chama)
+/************************************************************
+ * 2. ROTEADOR GERAL (O Cérebro de Triagem)
+ * É acionado automaticamente toda vez que ALGUÉM envia QUALQUER formulário.
  ************************************************************/
 function rotearFormulario(e) {
-  const nomeAba = e.range.getSheet().getName();
-  const dados = e.namedValues;
-  const get = (campo) => dados[campo] ? dados[campo][0].trim() : '';
+  const nomeAba = e.range.getSheet().getName(); // Descobre de qual formulário veio
+  const dados = e.namedValues; // Captura as respostas usando os títulos das colunas
+  const get = (campo) => dados[campo] ? dados[campo][0].trim() : ''; // Função auxiliar para evitar erros de valor vazio
 
-  // 1. SINCRONIZAÇÃO MASTER
+  // 1º Passo Obrigatório: Joga os dados novos para a BASE MASTER
   consolidarChamados();
 
-  // 2. LÓGICA DE DISTRIBUIÇÃO (Triagem Automática)
+  // 2º Passo: Decide quem vai ser avisado com base na aba de origem
   if (nomeAba === CONFIG.ABERTURA) {
-    // Todos os novos vão para a ENTRADA
+    // Envia para a coordenação geral sempre
     notificarAbertura(dados, CONFIG.TELEGRAM.CHATS.ENTRADA);
-
-    // Triagem por Tipologia
+    
+    // Filtro Inteligente de Setor: Separa Arbóreo/Doação do Resto
     const tipo = get('tipologia_inicial');
     if (tipo.includes('Arbóreo') || tipo.includes('Doação')) {
       notificarAbertura(dados, CONFIG.TELEGRAM.CHATS.NEW_OPERACIONAL);
@@ -84,34 +95,35 @@ function rotearFormulario(e) {
       notificarAbertura(dados, CONFIG.TELEGRAM.CHATS.NEW_TECNICA);
     }
   } 
-  
   else if (nomeAba === CONFIG.CAMPO) {
-    // Chamados finalizados/agendados vão para o grupo geral de CAMPO
-    notificarCampo(dados); 
-    // Atualiza os painéis de controle
-    msg_Consolidar(formatar.data(get('data_do_chamado')));
-    msg_InfoFast(); // Gera a estatística rápida
+    notificarCampo(dados); // Avisa a equipe de Campo da baixa
+    
+    // Identifica qual o dia afetado pela edição e gera o painel atualizado
+    const dataRef = formatar.data(get('data_do_chamado') || get('data_do_atendimento') || new Date());
+    msg_Consolidar(dataRef);
+    msg_InfoFast(); // Gera o "Dashboard de Bolso"
   }
-
-  // NOVA LÓGICA: Monitoramento de Vias
   else if (nomeAba === CONFIG.VIAS) {
-    notificarStatusVia(dados);
+    notificarStatusVia(dados); // Fluxo exclusivo de Alertas de Trânsito
   }
-
-  else if (nomeAba === 'aba_avulsos') { // Nome do seu 3º formulário
-    const setor = get('Setor Responsável'); // Ideal ter esse campo (OP ou TEC)
+  else if (nomeAba === 'aba_avulsos') { 
+    // Fluxo de Chamados Criados na Rua (sem passar pelo atendimento inicial)
+    const setor = get('Setor Responsável'); 
     const destino = (setor === 'Operacional') ? CONFIG.TELEGRAM.CHATS.AVULSO_OP : CONFIG.TELEGRAM.CHATS.AVULSO_TEC;
     notificarAvulso(dados, destino);
   }
 }
 
 /************************************************************
- * 3. MENSAGEM DE ABERTURA (O seu código de design)
+ * 3. MENSAGENS DE NOTIFICAÇÃO 
+ * Funções focadas apenas em montar textos bonitos e com emojis para o Telegram.
  ************************************************************/
-function notificarAbertura(v) {
+
+// Mensagem gerada pelo formulário de Triagem Inicial
+function notificarAbertura(v, destinoId) {
   const get = (campo) => v[campo] ? v[campo][0].trim() : '';
 
-  // Tratamentos que você criou (00, S/N, etc)
+  // Validações para não poluir a tela com '00' ou espaços vazios
   const numEndRaw = get('numero_do_endereco');
   const numeroEndereco = (numEndRaw === '00' || numEndRaw === '') ? 'S/N' : numEndRaw;
   const pontoRef = get('ponto_de_referencia') || 'Não informado';
@@ -119,7 +131,7 @@ function notificarAbertura(v) {
   const cpf = (get('CPF_do_solicitante') === '00' || get('CPF_do_solicitante') === '') ? 'Não informado' : get('CPF_do_solicitante');
   const horaFormatada = formatar.hora(get('hora_do_chamado'));
 
-  // Lógica de Subtipos
+  // Procura em todas as colunas de subtipo qual delas foi preenchida
   const camposSubtipos = ['subtipo_arboreo', 'subtipo_acidente_viario', 'subtipo_estrutural', 'subtipo_geologico', 'subtipo_hidrologico', 'subtipo_incendio'];
   const subtipoSelecionado = camposSubtipos.map(c => get(c)).find(valor => valor !== '') || 'Não informado';
 
@@ -145,16 +157,13 @@ function notificarAbertura(v) {
   
   if (get('descricao_observacoes')) msg += `📝 <b>Obs:</b> ${get('descricao_observacoes')}`;
 
-  enviarTelegram(CONFIG.TELEGRAM.CHATS.ABERTURA, msg);
+  enviarTelegram(destinoId, msg);
 }
 
-/************************************************************
- * 4. MENSAGEM DE CAMPO (Atendimento encerrado)
- ************************************************************/
+// Mensagem gerada quando a equipe encerra ou agenda um atendimento
 function notificarCampo(v) {
   const get = (campo) => v[campo] ? v[campo][0].trim() : '';
 
-  // --- TRATAMENTOS DE DADOS ---
   const numRaw = get('numero_do_endereco_confirmado');
   const numFinal = (numRaw === '00' || numRaw === '') ? 'S/N' : numRaw;
   
@@ -163,18 +172,16 @@ function notificarCampo(v) {
     return `${formatar.data(valor)} às ${formatar.hora(valor)}`;
   };
 
-  const equipeLista = get('equipe').replace(/, /g, ' | ');
+  const equipeLista = get('equipe').replace(/, /g, ' | '); // Exibe "João | Maria" ao invés de "João, Maria"
   const status = get('status_atual');
 
-  // --- INICIALIZAÇÃO DA MENSAGEM (Sempre no topo!) ---
-  // Ajuste: Use 'Número do Chamado' exatamente como está no cabeçalho da sua planilha de CAMPO
   let msg = `✅ <b>ATUALIZAÇÃO DE OCORRÊNCIA</b>\n\n`;
   msg += `<b>📄 CHAMADO ${get('Número do Chamado')}</b>\n`; 
   msg += `📅 <b>Data:</b> ${get('data_do_chamado')}\n`;
   msg += `📍 <b>Endereço:</b> ${get('logradouro_confirmado')}, nº ${numFinal} - ${get('bairro_confirmado')}\n`;
   msg += `👷 <b>Equipe:</b> ${equipeLista}\n\n`;
 
-  // --- BLOCO 1: STATUS DA VIA ---
+  // Blocos condicionais: Só aparecem se houve evento específico
   const statusVia = get('status_da_via');
   if (statusVia && statusVia !== 'Liberada') {
     msg += `<blockquote>🚧 <b>VIA: ${statusVia.toUpperCase()}</b>\n`;
@@ -182,21 +189,18 @@ function notificarCampo(v) {
     msg += `</blockquote>\n`;
   }
 
-  // --- BLOCO 2: VÍTIMAS ---
   if (get('ha_vitimas') === 'Sim') {
     msg += `<blockquote>⚠️ <b>VÍTIMAS CONFIRMADAS</b>\n`;
     msg += `• Quantidade: ${get('quantidade_vitimas') || 'Não informada'}\n`;
     msg += `</blockquote>\n`;
   }
 
-  // --- BLOCO 3: DOAÇÕES ---
   if (get('houve_doacao') === 'Sim') {
     msg += `<blockquote>📦 <b>DOAÇÕES REALIZADAS</b>\n`;
     msg += `• Itens: ${get('materiais_doados')}\n`;
     msg += `</blockquote>\n`;
   }
 
-  // --- BLOCO 4: ENCAMINHAMENTOS ---
   const orgaos = get('encaminhamento_orgaos');
   if (orgaos) {
     msg += `<blockquote>🏢 <b>DIRECIONAMENTO:</b>\n`;
@@ -204,18 +208,16 @@ function notificarCampo(v) {
     msg += `</blockquote>\n`;
   }
 
-  // --- LÓGICA POR STATUS ---
+  // Define os dados de encerramento dependendo do novo Status
   if (status.includes('Atendido')) {
     msg += `📝 <b>Status:</b> ✅ Atendido\n`;
     msg += `⏰ <b>Atendido em</b> ${formatarDataHora(get('data_hora_atendimento'))}\n`;
     msg += `🧭 <b>Tipologia confirmada:</b> ${get('tipologia_confirmada')}\n`;
     msg += `↳ 📝 <b>Relato:</b> ${get('resumo_de_campo')}\n\n`;
-  } 
-  else if (status.includes('Cancelado')) {
+  } else if (status.includes('Cancelado')) {
     msg += `📝 <b>Status:</b> ❌ Cancelado\n`;
     msg += `↳ <b>Motivo:</b> ${get('descreva_o_cancelamento') || 'Não informado'}\n\n`;
-  } 
-  else if (status.includes('Agendado')) {
+  } else if (status.includes('Agendado')) {
     msg += `📝 <b>Status:</b> 🕒 Agendado\n`;
     msg += `⏰ <b>Previsão:</b> ${formatarDataHora(get('data_hora_agendamento'))}\n`;
     msg += `🕒 <b>Turno:</b> ${get('Turno_previsto')}\n`;
@@ -225,14 +227,53 @@ function notificarCampo(v) {
   enviarTelegram(CONFIG.TELEGRAM.CHATS.CAMPO, msg);
 }
 
-/************************************************************
- * 5. consolidarChamados (VERSÃO REFATORADA)
- ************************************************************/
+// Alerta urgente de monitoramento de fluxo da cidade
+function notificarStatusVia(v) {
+  const get = (campo) => v[campo] ? v[campo][0].trim() : '';
+  const status = get('Status da Via');
+  const fuso = Session.getScriptTimeZone();
+  const hora = Utilities.formatDate(new Date(), fuso, 'HH:mm');
 
+  // Lógica de Semáforo
+  let alertaEmoji = "🚧";
+  if (status.includes("🔴")) alertaEmoji = "🚫";
+  if (status.includes("🟢")) alertaEmoji = "✅";
+
+  let msg = `${alertaEmoji} <b>ALERTA DE TRÂNSITO / VIA</b>\n`;
+  msg += `──────────────────\n\n`;
+  msg += `📍 <b>Local:</b> ${get('Logradouro')}\n`;
+  msg += `🏘️ <b>Bairro:</b> ${get('Bairro')}\n`;
+  msg += `🚩 <b>Incidente:</b> ${get('Tipo de Incidente')}\n\n`;
+  msg += `🚦 <b>STATUS:</b> ${status.toUpperCase()}\n\n`;
+    
+  if (get('Observações/Detalhes')) {
+    msg += `📝 <b>Detalhes:</b> <i>${get('Observações/Detalhes')}</i>\n`;
+  }
+
+  msg += `\n──────────────────\n🕒 <i>Informado às ${hora}</i>`;
+
+  // Alerta enviado para Gestão e também para quem está na rua (Entrada)
+  enviarTelegram(CONFIG.TELEGRAM.CHATS.INFO_FAST, msg);
+  enviarTelegram(CONFIG.TELEGRAM.CHATS.ENTRADA, msg);
+}
+
+function notificarAvulso(v, destinoId) {
+  const get = (campo) => v[campo] ? v[campo][0].trim() : '';
+  let msg = `🕵️ <b>NOVO CHAMADO IN LOCO (AVULSO)</b>\n`;
+  msg += `📍 Local: ${get('Logradouro')}, ${get('Bairro')}\n`;
+  msg += `👷 Equipe: ${get('Equipe')}\n`;
+  msg += `📝 Relato: ${get('Relato')}\n`;
+  enviarTelegram(destinoId, msg);
+}
+
+/************************************************************
+ * 4. CONSOLIDAÇÃO DA BASE MASTER (A Alma do Sistema)
+ * Funde duas planilhas soltas numa só Base de Dados confiável.
+ ************************************************************/
 function consolidarChamados() {
   const sheetBase = sh(CONFIG.BASE);
   
-  // Garante o cabeçalho de 24 colunas (X é a última)
+  // 4.1 Cria as 24 colunas caso a planilha seja nova ou tenha sido resetada
   if (!sheetBase.getLastRow()) {
     sheetBase.appendRow([
       'ID_UNICO', 'Nº Chamado', 'Data Abertura', 'Status Atual', 'Tipologia', 'Subtipo', 
@@ -243,63 +284,63 @@ function consolidarChamados() {
     ]);
   }
 
+  // 4.2 Criação de Mapa de Memória (Para busca instantânea, evita lentidão com muitos dados)
   const dataBase = sheetBase.getDataRange().getValues();
   const mapaBase = new Map();
+  // Guarda: ID ÚNICO -> Número da Linha
   dataBase.forEach((l, i) => { if (i > 0 && l[0]) mapaBase.set(String(l[0]), i + 1); });
 
-  // --- PARTE A: PROCESSAR ABERTURAS ---
+  // --- PASSO A: INSERIR NOVAS ABERTURAS ---
   const dAb = sh(CONFIG.ABERTURA).getDataRange().getValues();
-  const novas = [];
+  const novas = []; // Array que acumulará as novas inserções (Mecanismo "Lote" é mais rápido)
+  
   for (let i = 1; i < dAb.length; i++) {
     const id = formatar.id(dAb[i][2], dAb[i][3]);
-    if (id && !mapaBase.has(id)) {
+    if (id && !mapaBase.has(id)) { // Se o ID existe, mas não tá na Master, é um chamado novo
       const subtipo = dAb[i].slice(17, 25).find(v => v) || 'Não informado';
-      
       novas.push([
-        id, 
-        dAb[i][2], 
-        dAb[i][3], // <--- AQUI: Salvamos o valor bruto (Data + Hora) da Coluna D da aba Abertura
-        dAb[i][5], 
-        dAb[i][15], 
-        subtipo,
+        id, dAb[i][2], 
+        dAb[i][3], // Valor Bruto (Data + Hora) preservado para leitura correta do Bot
+        dAb[i][5], dAb[i][15], subtipo,
         dAb[i][6], dAb[i][7], dAb[i][8], dAb[i][10], dAb[i][12], dAb[i][13],
         '', '', '', '', '', '', '', '', '', '', new Date(), '' 
       ]);
-      mapaBase.set(id, -1);
+      mapaBase.set(id, -1); // Marca o ID como processado para não duplicar no loop
     }
   }
+  // Insere todas as linhas novas de uma vez (Extrema Performance)
   if (novas.length) sheetBase.getRange(sheetBase.getLastRow()+1, 1, novas.length, novas[0].length).setValues(novas);
 
-  // --- PARTE B: ATUALIZAR COM DADOS DE CAMPO ---
+  // --- PASSO B: ATUALIZAR STATUS DE CAMPO ---
   const dCp = sh(CONFIG.CAMPO).getDataRange().getValues();
   const dataBaseAtual = sheetBase.getDataRange().getValues();
   const mapaAtual = new Map();
+  // Recarrega o Mapa pois novas linhas foram adicionadas no Passo A
   dataBaseAtual.forEach((l, i) => { if(i > 0 && l[0]) mapaAtual.set(String(l[0]), i + 1); });
   
   for (let i = 1; i < dCp.length; i++) {
     const id = formatar.id(dCp[i][2], dCp[i][3]); 
-    const linha = mapaAtual.get(id);
+    const linha = mapaAtual.get(id); // Descobre instantaneamente em qual linha da Base este chamado está
 
     if (linha && linha !== -1) {
-      sheetBase.getRange(linha, 4).setValue(dCp[i][4]);   // Status
-      sheetBase.getRange(linha, 5).setValue(dCp[i][19]);  // Tipologia
-      sheetBase.getRange(linha, 13).setValue(dCp[i][5]);  // Equipe
-      
-      // AQUI: Pegamos o valor bruto da data/hora de atendimento (Coluna G da aba Campo)
-      sheetBase.getRange(linha, 14).setValue(dCp[i][6]); 
-      
-      sheetBase.getRange(linha, 15).setValue(dCp[i][7]);  // Relato
-      sheetBase.getRange(linha, 16).setValue(dCp[i][20]); // Agendamento
-      sheetBase.getRange(linha, 23).setValue(new Date()); // Update
-      sheetBase.getRange(linha, 24).setValue(dCp[i][17]); // Complemento
+      // Sobrescreve as colunas específicas daquela linha com os dados trazidos da rua
+      sheetBase.getRange(linha, 4).setValue(dCp[i][4]);   
+      sheetBase.getRange(linha, 5).setValue(dCp[i][19]);  
+      sheetBase.getRange(linha, 13).setValue(dCp[i][5]);  
+      sheetBase.getRange(linha, 14).setValue(dCp[i][6]);  // Preserva Data/Hora do Atendimento Real
+      sheetBase.getRange(linha, 15).setValue(dCp[i][7]);  
+      sheetBase.getRange(linha, 16).setValue(dCp[i][20]); 
+      sheetBase.getRange(linha, 23).setValue(new Date()); // Carimbo de tempo da modificação
+      sheetBase.getRange(linha, 24).setValue(dCp[i][17]); // Complemento de endereço real
     }
   }
 }
 
 /************************************************************
- * 5. msg_Consolidar (PARTE 2: Enviar Mensagem Consolidada)
+ * 5. COMPILADOS E ESTATÍSTICAS (Painéis de Gestão)
  ************************************************************/
 
+// Gera o Quadro do Dia. Recebe "dataEspecifica" para saber de qual dia exibir o quadro.
 function msg_Consolidar(dataEspecifica) {
   const sheetBase = sh(CONFIG.BASE);
   const dados = sheetBase.getDataRange().getValues();
@@ -309,32 +350,31 @@ function msg_Consolidar(dataEspecifica) {
   const hojeSistema = Utilities.formatDate(new Date(), fuso, 'dd/MM/yyyy');
   const agoraStr = `${hojeSistema} às ${Utilities.formatDate(new Date(), fuso, 'HH:mm')}`;
 
-  // --- 5.1 DEFINIÇÃO DA DATA DE REFERÊNCIA ---
-  // Se 'dataEspecifica' veio como objeto (bug), forçamos virar string ou null
+  // Se veio algum lixo tipo [object Object], limpa e deixa null
   let dataAlvo = (typeof dataEspecifica === 'string') ? dataEspecifica : null;
 
-  // Se não temos dataAlvo, buscamos o chamado mais recente atualizado
+  // Lógica de "Descoberta": Se não mandaram a data, procura a data do último chamado que foi editado (Col W)
   if (!dataAlvo) {
     let maxUpdate = 0;
     dados.slice(1).forEach(r => {
-      const time = new Date(r[22]).getTime(); // Coluna W (Update)
+      const time = new Date(r[22]).getTime(); 
       if (time > maxUpdate) {
         maxUpdate = time;
-        dataAlvo = formatar.data(r[2]); // Data de abertura do chamado editado
+        dataAlvo = formatar.data(r[2]); 
       }
     });
   }
   
   if (!dataAlvo || dataAlvo === '[object Object]') dataAlvo = hojeSistema;
 
-  // --- 5.2 FILTRAGEM ---
+  // Filtra apenas o que foi aberto nesta data OU que foi reagendado para ela
   const chamadosDoDia = dados.slice(1).filter(r => {
-    const dataAbertura = formatar.data(r[2]); // Coluna C
-    const dataAgendada = formatar.data(r[15]); // Coluna P
+    const dataAbertura = formatar.data(r[2]); 
+    const dataAgendada = formatar.data(r[15]); 
     return (dataAbertura === dataAlvo || dataAgendada === dataAlvo);
   });
 
-  // --- 5.3 ESTATÍSTICAS ---
+  // Estatísticas matemáticas básicas
   const total = chamadosDoDia.length;
   const atendidos = chamadosDoDia.filter(r => String(r[3]).includes('Atendido')).length;
   const cancelados = chamadosDoDia.filter(r => String(r[3]).includes('Cancelado')).length;
@@ -344,24 +384,24 @@ function msg_Consolidar(dataEspecifica) {
   const icones = { 'Arbóreo': '🌳', 'Acidente viário': '🚧', 'Estrutural': '🏚️', 'Geológico': '⛰️', 'Hidrológico': '🌊', 'Incêndio': '🔥', 'Entrega de doação': '🎁' };
   const grupos = {}; 
 
+  // Agrupamento de listas por Categoria (Tipologia)
   chamadosDoDia.forEach(r => {
     const tipologiaBruta = r[4] || 'Outros'; 
+    // Limpeza de caracteres especiais/emojis no nome da Categoria
     const nomeLimpo = tipologiaBruta.replace(/[^\w\sÀ-ú]/g, '').trim();
     if (!grupos[nomeLimpo]) grupos[nomeLimpo] = [];
     grupos[nomeLimpo].push(r);
   });
 
-  // --- 5.5 CABEÇALHO ---
   let msg = `📊 <b>COMPILADO DE CHAMADOS</b>\n`;
   msg += `📅 <b>Referência:</b> ${dataAlvo}\n`; 
   msg += `<i>Última atualização: ${agoraStr}</i>\n\n`;
-  
   msg += `<b>TOTAL DE CHAMADOS:</b> ${total}\n`;
   msg += `✅ Atendidos: ${atendidos}  ⏳ Pendentes: ${pendentes}\n`;
   msg += `📅 Agendados: ${agendados}  ❌ Cancelados: ${cancelados}\n`;
   msg += `──────────────────\n`;
 
-  // --- 5.6 CORPO ---
+  // Montagem do Relatório linha a linha
   for (const categoria in grupos) {
     const emoji = icones[categoria] || '📋';
     msg += `${emoji} | <b>${categoria.toUpperCase()}:</b>\n\n`;
@@ -370,23 +410,23 @@ function msg_Consolidar(dataEspecifica) {
       const chamadoNum = r[1];
       const statusRaw = String(r[3] || '');
       
-      // Limpeza de ícones e termos
+      // Limpa os Emojis que vem do Forms e troca "Aguardando..." para o termo mais curto "Pendente"
       const statusLimpo = statusRaw.replace(/[^\w\sÀ-ú]/g, '').replace('Aguardando atendimento', 'Pendente').trim();
 
       const logradouro = r[7] || 'Não informado'; 
       const numFinal = (String(r[8]) === '00' || !r[8]) ? 's/n' : r[8];
-      const compRaw = String(r[23] || '').trim(); // Complemento na Coluna X
+      const compRaw = String(r[23] || '').trim(); 
       const complemento = (compRaw && compRaw !== 'undefined') ? ` – <i>${compRaw}</i>` : ''; 
       const bairro = r[9] || 'Não informado'; 
       
+      // Trava de segurança: Se vier < ou > no relato (matemática), evita que o Telegram quebre o HTML
       let relatoSeguro = String(r[14] || 'Sem observações.').trim().replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-      // --- LÓGICA DE TEMPO (Onde resolvemos o 00:00) ---
       let statusEmoji = '⏳';
       let acao = 'Pendente desde'; 
-      // Puxa a hora da coluna C (r[2]). Agora que salvamos o bruto, o formatar.hora vai funcionar!
-      let tempoRef = `${formatar.data(r[2])} às ${formatar.hora(r[2])}`; 
+      let tempoRef = `${formatar.data(r[2])} às ${formatar.hora(r[2])}`; // Hora correta puxada do valor bruto da Coluna C
 
+      // Adaptação do verbo e do horário dependendo do que aconteceu
       if (statusRaw.includes('Atendido')) {
         statusEmoji = '✅';
         acao = 'Atendido em';
@@ -409,18 +449,61 @@ function msg_Consolidar(dataEspecifica) {
     });
   }
 
+  // Prevenção de mensagem em branco
   if (total === 0) {
     msg = `📊 <b>COMPILADO DE CHAMADOS</b>\n📅 <b>Referência:</b> ${dataAlvo}\n\n‼️ <b>Sem demandas para esta data.</b>`;
   }
-
   enviarTelegram(CONFIG.TELEGRAM.CHATS.COMPILADO, msg);
 }
 
-/************************************************************
- * 6. RESUMO ESTATÍSTICO: FIM DE TURNO
- * Ideal para ser disparado via Gatilho de Tempo (ex: 17h)
- ************************************************************/
+// DashBoard Rápido: Diz quem tá trabalhando, e onde estão os gargalos pendentes
+function msg_InfoFast() {
+  const sheetBase = sh(CONFIG.BASE);
+  const dados = sheetBase.getDataRange().getValues();
+  if (dados.length <= 1) return;
 
+  const fuso = Session.getScriptTimeZone();
+  const hoje = Utilities.formatDate(new Date(), fuso, 'dd/MM/yyyy');
+  const chamadosHoje = dados.slice(1).filter(r => formatar.data(r[2]) === hoje);
+  
+  // Isola apenas o que é problema (não resolvido e não cancelado)
+  const pendentes = chamadosHoje.filter(r => {
+    const status = String(r[3]).toLowerCase();
+    return !status.includes('atendido') && !status.includes('cancelado');
+  });
+
+  const total = chamadosHoje.length;
+  const qtdPendentes = pendentes.length;
+  const atendidos = total - qtdPendentes;
+
+  let listaPendentes = "";
+  if (pendentes.length > 0) {
+    listaPendentes = "⚠️ <b>DETALHE DOS PENDENTES:</b>\n";
+    pendentes.forEach(p => {
+      const numChamado = p[1];
+      const logradouro = p[7] || 'Endereço não informado';
+      const bairro = p[9] || 'Bairro s/n';
+      const tipo = p[4] || 'Outros';
+      listaPendentes += `• <b>[${numChamado}]</b> ${tipo} - ${logradouro}, ${bairro}\n`;
+    });
+  } else {
+    listaPendentes = "✅ <b>Nenhuma pendência para hoje!</b>\n";
+  }
+
+  let msg = `⚡ <b>INFO FAST - DASHBOARD</b>\n`;
+  msg += `📅 Data: ${hoje}\n`;
+  msg += `──────────────────\n\n`;
+  msg += `📊 <b>RESUMO:</b>\n`;
+  msg += `Total: ${total} | ✅ Atendidos: ${atendidos}\n`;
+  msg += `⏳ <b>Pendentes: ${qtdPendentes}</b>\n\n`;
+  msg += `${listaPendentes}\n`;
+  msg += `──────────────────\n`;
+  msg += `<i>Atualizado em: ${Utilities.formatDate(new Date(), fuso, 'HH:mm')}</i>`;
+
+  enviarTelegram(CONFIG.TELEGRAM.CHATS.INFO_FAST, msg);
+}
+
+// Fechamento da Operação: Identifica Palavras Chave (Habitacional, Demolição) via RegEx Simples
 function resumoFimDeTurno() {
   const sheetBase = sh(CONFIG.BASE);
   const dados = sheetBase.getDataRange().getValues();
@@ -428,8 +511,6 @@ function resumoFimDeTurno() {
 
   const fuso = Session.getScriptTimeZone();
   const hoje = Utilities.formatDate(new Date(), fuso, 'dd/MM/yyyy');
-  
-  // 1. FILTRAGEM: Apenas chamados que foram abertos ou atendidos HOJE
   const chamadosHoje = dados.slice(1).filter(r => formatar.data(r[2]) === hoje);
 
   if (chamadosHoje.length === 0) {
@@ -437,59 +518,33 @@ function resumoFimDeTurno() {
     return;
   }
 
-  // 6.1 VARIÁVEIS DE CONTAGEM
+  // Acumuladores 
   let estatisticas = {
-    total: chamadosHoje.length,
-    atendidos: 0,
-    pendentes: 0,
-    tipologias: {},
-    auxilioHabitacional: 0,
-    demolicao: 0,
-    doacoesEntregues: 0,
-    avulsosInLoco: 0
+    total: chamadosHoje.length, atendidos: 0, pendentes: 0, tipologias: {},
+    auxilioHabitacional: 0, demolicao: 0, doacoesEntregues: 0, avulsosInLoco: 0
   };
 
-  // 6.2 PROCESSAMENTO DOS DADOS
   chamadosHoje.forEach(r => {
     const status = String(r[3]).toLowerCase();
     const tipo = r[4] || 'Outros';
-    const relato = String(r[14]).toLowerCase(); // Coluna O
-    const orgaos = String(r[21]).toLowerCase(); // Coluna V (Órgãos Acionados)
-    const doacaoSituacao = String(r[18]).toLowerCase(); // Coluna S (Doação Sim/Não)
-    const origem = String(r[6]).toLowerCase(); // Coluna G (Origem do Chamado)
+    const relato = String(r[14]).toLowerCase(); 
+    const orgaos = String(r[21]).toLowerCase(); 
+    const doacaoSituacao = String(r[18]).toLowerCase(); 
+    const origem = String(r[6]).toLowerCase(); 
 
-    // Contagem de Status
     status.includes('atendido') ? estatisticas.atendidos++ : estatisticas.pendentes++;
-
-    // Contagem por Tipologia
     estatisticas.tipologias[tipo] = (estatisticas.tipologias[tipo] || 0) + 1;
 
-    // Busca por Auxílio Habitacional (na coluna de órgãos ou relato)
-    if (orgaos.includes('habitacional') || relato.includes('habitacional') || relato.includes('auxílio')) {
-      estatisticas.auxilioHabitacional++;
-    }
-
-    // Busca por Demolição (no relato)
-    if (relato.includes('demolição') || relato.includes('demolir') || relato.includes('interdição total')) {
-      estatisticas.demolicao++;
-    }
-
-    // Contagem de Doações Realizadas
-    if (doacaoSituacao.includes('sim')) {
-      estatisticas.doacoesEntregues++;
-    }
-
-    // Contagem de Avulsos (In Loco)
-    if (origem.includes('loco') || origem.includes('avulso')) {
-      estatisticas.avulsosInLoco++;
-    }
+    // Filtros inteligentes por palavra-chave para extrair dados sem colunas específicas
+    if (orgaos.includes('habitacional') || relato.includes('habitacional') || relato.includes('auxílio')) estatisticas.auxilioHabitacional++;
+    if (relato.includes('demolição') || relato.includes('demolir') || relato.includes('interdição total')) estatisticas.demolicao++;
+    if (doacaoSituacao.includes('sim')) estatisticas.doacoesEntregues++;
+    if (origem.includes('loco') || origem.includes('avulso')) estatisticas.avulsosInLoco++;
   });
 
-  // 6.3 MONTAGEM DA MENSAGEM VISUAL
   let msg = `🏁 <b>RESUMO FINAL DE TURNO</b>\n`;
   msg += `📅 Data: ${hoje}\n`;
   msg += `──────────────────\n\n`;
-
   msg += `📈 <b>PRODUTIVIDADE:</b>\n`;
   msg += `• Total de Demandas: ${estatisticas.total}\n`;
   msg += `• ✅ Atendidos: ${estatisticas.atendidos}\n`;
@@ -505,138 +560,18 @@ function resumoFimDeTurno() {
   msg += `• 🏠 Auxílio Habitacional: ${estatisticas.auxilioHabitacional}\n`;
   msg += `• 🏚️ Necessidade Demolição: ${estatisticas.demolicao}\n`;
   msg += `• 🎁 Ajuda Humanitária: ${estatisticas.doacoesEntregues}\n`;
-
   msg += `\n──────────────────\n`;
-  msg += `<i>Relatório gerado automaticamente às ${Utilities.formatDate(new Date(), fuso, 'HH:mm')}</i>`;
+  msg += `<i>Relatório gerado às ${Utilities.formatDate(new Date(), fuso, 'HH:mm')}</i>`;
 
-  // Envia para o grupo de Gestão (INFO_FAST)
   enviarTelegram(CONFIG.TELEGRAM.CHATS.INFO_FAST, msg);
 }
 
-/**
- * 6.4 Gera o relatório matinal de compromissos agendados por setor.
- * Disparo ideal: Todo dia às 07:30 ou 08:00 via Gatilho.
- */
-function relatorioAgendadosHoje() {
-  const sheetBase = sh(CONFIG.BASE);
-  const dados = sheetBase.getDataRange().getValues();
-  if (dados.length <= 1) return;
-
-  const agora = new Date();
-  const dataHojeStr = formatar.data(agora);
-  const diasSemana = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
-  const diaNome = diasSemana[agora.getDay()];
-
-  // 6.41. FILTRAGEM: Apenas o que é para HOJE e NÃO está finalizado
-  const agendadosHoje = dados.slice(1).filter(r => {
-    const dataAgendada = formatar.data(r[15]); // Coluna P
-    const status = String(r[3] || '').toLowerCase(); // Coluna D
-    return dataAgendada === dataHojeStr && !status.includes('atendido') && !status.includes('cancelado');
-  });
-
-  if (agendadosHoje.length === 0) {
-    const msgVazio = `✅ <b>Sem agendamentos pendentes para hoje:</b>\n📅 <i>${dataHojeStr} (${diaNome})</i>`;
-    enviarTelegram(CONFIG.TELEGRAM.CHATS.INFO_FAST, msgVazio);
-    return;
-  }
-
-  // 6.4.2. SEPARAÇÃO POR SETOR PARA ENVIO DIRECIONADO
-  const setores = {
-    'op': { nome: '📦 OPERACIONAL', chat: CONFIG.TELEGRAM.CHATS.NEW_OPERACIONAL, lista: [] },
-    'tec': { nome: '📐 TÉCNICA', chat: CONFIG.TELEGRAM.CHATS.NEW_TECNICA, lista: [] }
-  };
-
-  agendadosHoje.forEach(r => {
-    const equipe = String(r[12]).toLowerCase(); // Coluna M
-    const info = {
-      id: r[1],
-      tipo: r[4],
-      logradouro: r[7] || 'Não inf.',
-      num: (String(r[8]) === '00' || !r[8]) ? 'S/N' : r[8],
-      bairro: r[9] || 'Não inf.',
-      turno: String(r[16] || 'NÃO DEFINIDO').toUpperCase()
-    };
-
-    const itemMsg = `🔔 <b>Chamado: ${info.id}</b>\n` +
-                    `🧭 ${info.tipo}\n` +
-                    `📍 ${info.logradouro}, ${info.num} - ${info.bairro}\n` +
-                    `🕒 Turno: <b>${info.turno}</b>\n` +
-                    `──────────────────\n\n`;
-
-    if (equipe.includes('operacional') || equipe.includes('op')) {
-      setores.op.lista.push(itemMsg);
-    } else {
-      setores.tec.lista.push(itemMsg);
-    }
-  });
-
-  // 6.4.3. ENVIO DAS MENSAGENS PERSONALIZADAS
-  for (let chave in setores) {
-    const s = setores[chave];
-    if (s.lista.length > 0) {
-      let cabecalho = `📅 <b>AGENDADOS: ${s.nome}</b>\n`;
-      cabecalho += `📍 ${dataHojeStr} (${diaNome.toUpperCase()})\n`;
-      cabecalho += `──────────────────\n\n`;
-      
-      enviarTelegram(s.chat, cabecalho + s.lista.join(''));
-    }
-  }
-
-  // 6.4.4. AVISO NO INFO_FAST (Para o Gestor saber que as equipes foram avisadas)
-  const resumoGestor = `📢 <b>RELATÓRIO MATINAL ENVIADO</b>\n` +
-                       `• Técnica: ${setores.tec.lista.length} agendados\n` +
-                       `• Operacional: ${setores.op.lista.length} agendados`;
-  enviarTelegram(CONFIG.TELEGRAM.CHATS.INFO_FAST, resumoGestor);
-}
-
 /************************************************************
- * 6.5 FUNÇÃO: TRANSFERIR CHAMADOS ENTRE SETORES (OP <-> TEC)
+ * 6. RELATÓRIOS MATINAIS E PENDÊNCIAS
+ * Envia as listas de missões para as equipes específicas
  ************************************************************/
-function transferirChamadoSetor(chatId, num, data, destinoSigla) {
-  const sheetBase = sh(CONFIG.BASE);
-  const dados = sheetBase.getDataRange().getValues();
-  const idProcurado = formatar.id(num, data);
 
-  // 6.5.1. Localizar o chamado
-  const chamado = dados.find(r => String(r[0]) === idProcurado);
-
-  if (!chamado) {
-    enviarTelegram(chatId, `❌ Chamado <b>${num}</b> do dia <b>${data}</b> não encontrado.`);
-    return;
-  }
-
-  // 6.5.2. Definir o novo chat de destino e o nome do setor
-  const novoChatId = (destinoSigla === 'op') ? CONFIG.TELEGRAM.CHATS.NEW_OPERACIONAL : CONFIG.TELEGRAM.CHATS.NEW_TECNICA;
-  const nomeSetor = (destinoSigla === 'op') ? '📦 OPERACIONAL' : '📐 TÉCNICA';
-
-  // 3. Montar a ficha de transferência para o novo grupo
-  let msg = `🔄 <b>CHAMADO TRANSFERIDO PARA ESTE SETOR</b>\n`;
-  msg += `──────────────────\n`;
-  msg += `🆔 <b>Nº:</b> ${chamado[1]}  |  📅 <b>Data:</b> ${formatar.data(chamado[2])}\n`;
-  msg += `🚩 <b>Tipologia:</b> ${chamado[4]}\n`;
-  msg += `📍 <b>Local:</b> ${chamado[7]}, ${chamado[8]} - ${chamado[9]}\n`;
-  msg += `📞 <b>Solicitante:</b> ${chamado[10]} (${chamado[11]})\n`;
-  msg += `──────────────────\n`;
-  msg += `⚠️ <i>Motivo: Reclassificado via sistema por um gestor.</i>`;
-
-  // 6.5.4. Enviar para o novo grupo
-  enviarTelegram(novoChatId, msg);
-
-  // 6.5.5. Confirmar para quem solicitou a transferência
-  enviarTelegram(chatId, `✅ Chamado <b>${num}</b> transferido com sucesso para <b>${nomeSetor}</b>.`);
-  
-  // 6.5.6 Opcional: Atualizar a coluna "Equipe" na Planilha para o novo setor
-  const index = dados.findIndex(r => String(r[0]) === idProcurado);
-  if (index !== -1) {
-    sheetBase.getRange(index + 1, 13).setValue(nomeSetor); // Coluna M (Equipe)
-  }
-}
-
-/**
- * 6.6 FUNÇÃO: RELATÓRIO DE PENDÊNCIAS ATIVAS (AGENDADOS HOJE + ATRASADOS)
- * Este relatório varre a base em busca de tudo que a equipe precisa resolver hoje,
- * incluindo o que ficou pendente de dias anteriores.
- */
+// A MAIS IMPORTANTE DA MANHÃ: Varre chamados velhos pendentes e junta com os agendados de hoje.
 function relatorioAgendadosHoje() {
   const sheetBase = sh(CONFIG.BASE);
   const dados = sheetBase.getDataRange().getValues();
@@ -645,18 +580,17 @@ function relatorioAgendadosHoje() {
   const hoje = new Date();
   const hojeFormatado = formatar.data(hoje);
   
-  // 6.1.A FILTRAGEM INTELIGENTE
+  // Regra de Negócio: Precisa ser resolvido HOJE ou está ATRASADO em relação ao dia de hoje?
   const pendenciasAtivas = dados.slice(1).filter(r => {
-    const dataAgendada = formatar.data(r[15]); // Coluna P (Agendamento)
-    const dataAbertura = formatar.data(r[2]);  // Coluna C (Abertura)
+    const dataAgendada = formatar.data(r[15]); 
+    const dataAbertura = formatar.data(r[2]);  
     const status = String(r[3] || '').toLowerCase();
     
-    // Regra: Está agendado para hoje OU (É de data passada E não está finalizado)
     const ehHoje = (dataAgendada === hojeFormatado || dataAbertura === hojeFormatado);
     const estaPendente = !status.includes('atendido') && !status.includes('cancelado');
     
-    // Captura tudo que é "Hoje" ou "Atrasado mas Pendente"
-    return estaPendente && (ehHoje || dataAgendada < hojeFormatado || dataAbertura < hoyeFormatado);
+    // Devolve true se é um problema que não foi resolvido e o tempo de ação passou ou é hoje.
+    return estaPendente && (ehHoje || dataAgendada < hojeFormatado || dataAbertura < hojeFormatado);
   });
 
   if (pendenciasAtivas.length === 0) {
@@ -664,7 +598,7 @@ function relatorioAgendadosHoje() {
     return;
   }
 
-  // 6.2.B ORGANIZAÇÃO POR SETOR
+  // Prepara as caixas postais separadas por Setor
   const setores = {
     'op': { nome: '📦 OPERACIONAL', chat: CONFIG.TELEGRAM.CHATS.NEW_OPERACIONAL, hoje: [], atrasados: [] },
     'tec': { nome: '📐 TÉCNICA', chat: CONFIG.TELEGRAM.CHATS.NEW_TECNICA, hoje: [], atrasados: [] }
@@ -672,48 +606,117 @@ function relatorioAgendadosHoje() {
 
   pendenciasAtivas.forEach(r => {
     const equipe = String(r[12]).toLowerCase();
-    const dataRef = r[15] ? formatar.data(r[15]) : formatar.data(r[2]);
-    const ehAtrasado = dataRef < hojeFormatado;
+    const dataRef = r[15] ? formatar.data(r[15]) : formatar.data(r[2]); // Usa agendamento se tiver, senão usa abertura
+    const ehAtrasado = dataRef < hojeFormatado; // Compara strings DD/MM/AAAA para saber se é do passado
 
     const item = `🔔 <b>[${r[1]}]</b> ${r[4]}\n` +
                  `📍 ${r[7]}, ${r[8]} - ${r[9]}\n` +
                  `📅 Ref: ${dataRef} | 🕒 Turno: ${r[16] || '---'}\n` +
                  `──────────────────\n`;
 
-    const alvo = (equipe.includes('op')) ? setores.op : setores.tec;
+    // Define de quem é o problema
+    const alvo = (equipe.includes('op') || equipe.includes('operacional')) ? setores.op : setores.tec;
     
-    if (ehAtrasado) {
-      alvo.atrasados.push(item);
-    } else {
-      alvo.hoje.push(item);
-    }
+    if (ehAtrasado) alvo.atrasados.push(item);
+    else alvo.hoje.push(item);
   });
 
-  // 6.3.C MONTAGEM E ENVIO DAS MENSAGENS
+  // Envia as missões para cada Setor
   for (let chave in setores) {
     const s = setores[chave];
     if (s.hoje.length > 0 || s.atrasados.length > 0) {
       let msg = `📋 <b>PAINEL DE TRABALHO: ${s.nome}</b>\n`;
       msg += `📅 Data: ${hojeFormatado}\n\n`;
 
-      if (s.atrasados.length > 0) {
-        msg += `⚠️ <b>PENDÊNCIAS ACUMULADAS:</b>\n${s.atrasados.join('')}\n`;
-      }
-
-      if (s.hoje.length > 0) {
-        msg += `📌 <b>DEMANDAS DE HOJE:</b>\n${s.hoje.join('')}`;
-      }
+      if (s.atrasados.length > 0) msg += `⚠️ <b>PENDÊNCIAS ACUMULADAS:</b>\n${s.atrasados.join('')}\n`;
+      if (s.hoje.length > 0) msg += `📌 <b>DEMANDAS DE HOJE:</b>\n${s.hoje.join('')}`;
 
       enviarTelegram(s.chat, msg);
     }
   }
 }
 
+// "Visão de Guerra" solicitada via comando /pendentes (Junta OP + TEC num relatório geral)
+function enviarPendentesGeral(chatId) {
+  const sheetBase = sh(CONFIG.BASE);
+  const dados = sheetBase.getDataRange().getValues();
+  const hoje = formatar.data(new Date());
+
+  const pendentes = dados.slice(1).filter(r => {
+    const dataChamado = formatar.data(r[2]);
+    const status = String(r[3]).toLowerCase();
+    return dataChamado === hoje && !status.includes('atendido') && !status.includes('cancelado');
+  });
+
+  let msg = `🚨 <b>STATUS GERAL: PENDÊNCIAS HOJE</b>\n`;
+  msg += `──────────────────\n\n`;
+
+  const op = pendentes.filter(r => String(r[12]).toLowerCase().includes('op'));
+  const tec = pendentes.filter(r => !String(r[12]).toLowerCase().includes('op')); // Tudo que não é OP, é TEC por padrão
+
+  msg += `📐 <b>SETOR TÉCNICO:</b>\n`;
+  tec.length ? tec.forEach(r => msg += `• [${r[1]}] ${r[4]} - ${r[7]}\n`) : msg += `<i>Vazio</i>\n`;
+
+  msg += `\n📦 <b>SETOR OPERACIONAL:</b>\n`;
+  op.length ? op.forEach(r => msg += `• [${r[1]}] ${r[4]} - ${r[7]}\n`) : msg += `<i>Vazio</i>\n`;
+
+  msg += `\n──────────────────\n📊 Total Pendente: ${pendentes.length}`;
+  enviarTelegram(chatId, msg);
+}
+
+// Visão de Planejamento (O que temos agendado amanhã e depois de amanhã?)
+function enviarListaAgendados(chatId) {
+  const sheetBase = sh(CONFIG.BASE);
+  const dados = sheetBase.getDataRange().getValues();
+  const hoje = formatar.data(new Date());
+
+  const agendados = dados.slice(1).filter(r => {
+    const dataAgend = formatar.data(r[15]); 
+    const status = String(r[3]);
+    return dataAgend && dataAgend !== hoje && dataAgend !== 'Não informado' && status.includes('Agendado');
+  });
+
+  let msg = `📅 <b>PLANEJAMENTO: AGENDADOS FUTUROS</b>\n`;
+  msg += `──────────────────\n\n`;
+
+  if (agendados.length === 0) {
+    msg += "<i>Não há agendamentos para os próximos dias.</i>";
+  } else {
+    // .sort reorganiza as linhas de data menor para maior
+    agendados.sort((a, b) => new Date(a[15]) - new Date(b[15]));
+    agendados.forEach(r => {
+      msg += `🗓️ <b>${formatar.data(r[15])}</b>\n• [${r[1]}] ${r[12] || 'Sem Setor'} - ${r[7]}\n\n`;
+    });
+  }
+  enviarTelegram(chatId, msg);
+}
+
+// Filtro cirúrgico de pendências para os comandos específicos (/pendentesop e /pendentestec)
+function enviarPendentesSetor(chatId, setor) {
+  const sheetBase = sh(CONFIG.BASE);
+  const dados = sheetBase.getDataRange().getValues();
+  const hoje = formatar.data(new Date());
+  const nomeSetor = (setor === 'op') ? '📦 OPERACIONAL' : '📐 TÉCNICA';
+
+  const lista = dados.slice(1).filter(r => {
+    const equipe = String(r[12]).toLowerCase();
+    const dataChamado = formatar.data(r[2]);
+    const status = String(r[3]).toLowerCase();
+    
+    const ehDoSetor = (setor === 'op') ? (equipe.includes('op') || equipe.includes('operacional')) : (equipe.includes('tec') || equipe.includes('técnica'));
+    return ehDoSetor && dataChamado === hoje && !status.includes('atendido');
+  });
+
+  let msg = `📋 <b>PENDÊNCIAS: ${nomeSetor}</b>\n`;
+  msg += `──────────────────\n\n`;
+  lista.length ? lista.forEach(r => msg += `• [${r[1]}] ${r[7]}, ${r[9]}\n`) : msg += `✅ Tudo em dia!`;
+  enviarTelegram(chatId, msg);
+}
+
 /************************************************************
  * 7. GESTÃO DE ESCALA DIÁRIA
- * Lê a planilha de escala e informa a equipe de plantão
+ * Mecanismo de Prevenção de Spam em Edições Simultâneas (Debounce)
  ************************************************************/
-
 function msg_EnviarEscala(origem = "AUTOMÁTICO") {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheetEscala = ss.getSheetByName('Escala_diaria_2026');
@@ -721,10 +724,9 @@ function msg_EnviarEscala(origem = "AUTOMÁTICO") {
 
   const dados = sheetEscala.getDataRange().getValues();
   const hojeStr = formatar.data(new Date());
-  
   let escalaHoje = null;
 
-  // Localiza a linha de HOJE
+  // Busca qual linha corresponde à data de hoje no calendário anual
   for (let i = 1; i < dados.length; i++) {
     if (formatar.data(dados[i][0]) === hojeStr) {
       escalaHoje = dados[i];
@@ -744,348 +746,232 @@ function msg_EnviarEscala(origem = "AUTOMÁTICO") {
   let msg = `📅 <b>ESCALA DE PLANTÃO - ${hojeStr}</b>\n`;
   msg += `<i>(${origem === "EDIT" ? "🔄 Atualização de Escala" : "📢 Informativo Matinal"})</i>\n`;
   msg += `──────────────────\n\n`;
-
   msg += `👤 <b>TÉCNICO(S):</b>\n↳ ${tecnico1}${tecnico2 ? ` / ${tecnico2}` : ''}\n\n`;
   msg += `👷 <b>OPERACIONAL:</b>\n↳ ${operacional1}${operacional2 ? ` / ${operacional2}` : ''}\n\n`;
   msg += `🏢 <b>SETOR / ENTRADA:</b>\n↳ ${setor1}${setor2 ? ` / ${setor2}` : ''}\n`;
   msg += `──────────────────`;
 
-  // Mestre Viton, aqui você escolhe: ENTRADA, INFO_FAST ou COMPILADO.
-  // Vou colocar no INFO_FAST para o pessoal da gestão ver primeiro.
   enviarTelegram(CONFIG.TELEGRAM.CHATS.INFO_FAST, msg);
 }
 
-/**
- * 7.1 GATILHO DE EDIÇÃO (Trigger Instalável)
- * Em vez de enviar na hora, ele agenda o envio para daqui a 2 minutos.
- */
+// Gatilho que é ativado ao mexer na planilha de escala
 function gatilhoEdicaoEscala(e) {
-  const range = e.range;
-  const sheetName = range.getSheet().getName();
-
+  const sheetName = e.range.getSheet().getName();
   if (sheetName === 'Escala_diaria_2026') {
-    // 7.1.1 Apaga qualquer agendamento de escala que já esteja "na fila"
+    // 1. CÓDIGO ANTI-SPAM: Destrói qualquer contagem regressiva anterior 
     const gatilhos = ScriptApp.getProjectTriggers();
     gatilhos.forEach(t => {
-      if (t.getHandlerFunction() === 'processarEnvioEscalaAgendado') {
-        ScriptApp.deleteTrigger(t);
-      }
+      if (t.getHandlerFunction() === 'processarEnvioEscalaAgendado') ScriptApp.deleteTrigger(t);
     });
 
-    // 7.1.2 Cria um novo agendamento para daqui a 2 minutos (120.000 milissegundos)
+    // 2. Inicia uma nova contagem de 2 minutos (Tempo de sobra pro RH preencher tudo)
     ScriptApp.newTrigger('processarEnvioEscalaAgendado')
-             .timeBased()
-             .after(2 * 60 * 1000) 
-             .create();
-             
-    console.log("⏱️ Edição detectada. Envio da escala agendado para daqui a 2 min.");
+             .timeBased().after(2 * 60 * 1000).create();
   }
 }
 
-/**
- * 7.2 Função auxiliar que o cronômetro vai chamar de fato.
- */
+// A função que é finalmente executada após a contagem de 2 min acabar
 function processarEnvioEscalaAgendado() {
   msg_EnviarEscala("EDIT");
-  
-  // Limpeza de segurança: apaga o próprio gatilho após rodar para não acumular
+  // O gatilho de tempo é efêmero, mas fazemos uma limpeza geral por segurança
   const gatilhos = ScriptApp.getProjectTriggers();
   gatilhos.forEach(t => {
-    if (t.getHandlerFunction() === 'processarEnvioEscalaAgendado') {
-      ScriptApp.deleteTrigger(t);
-    }
+    if (t.getHandlerFunction() === 'processarEnvioEscalaAgendado') ScriptApp.deleteTrigger(t);
   });
 }
 
 /************************************************************
- * 8. COMANDOS DO BOT (Interação Direta e Inteligente)
+ * 8. INTERAÇÃO E COMANDOS DO BOT DO TELEGRAM
+ * O Webhook doPost "escuta" a API do Telegram em tempo real.
  ************************************************************/
-
 function doPost(e) {
   try {
     const dados = JSON.parse(e.postData.contents);
     if (!dados.message || !dados.message.text) return;
 
+    // Converte tudo para minúscula e quebra as palavras nos espaços para separar Comando de Argumento
     const textoBot = dados.message.text.toLowerCase().trim();
     const partes = textoBot.split(' '); 
-    const comando = partes[0];
+    const comando = partes[0]; // Ex: "/editar"
     const chatId = dados.message.chat.id;
 
-    // 8.1 COMANDO: /busca [nº] [data]
     if (comando === '/busca') {
-      const num = partes[1];
-      const data = partes[2];
-      if (!num || !data) {
-        enviarTelegram(chatId, "⚠️ <b>Erro de Formato</b>\nUse: <code>/busca [nº] [dd/mm/aaaa]</code>");
-        return;
-      }
+      const num = partes[1], data = partes[2];
+      if (!num || !data) return enviarTelegram(chatId, "⚠️ <b>Erro</b>\nUse: <code>/busca [nº] [dd/mm/aaaa]</code>");
       buscarPorId(chatId, num, data);
     }
-
-    // 8.2 COMANDO: /endereco [nome da rua]
     else if (comando === '/endereco') {
       const termo = partes.slice(1).join(' ');
-      if (!termo) {
-        enviarTelegram(chatId, "⚠️ Digite o nome da rua.");
-        return;
-      }
+      if (!termo) return enviarTelegram(chatId, "⚠️ Digite o nome da rua.");
       buscarPorEndereco(chatId, termo);
     }
-
-    // 8.3 COMANDO: /status (Compilado Geral do Dia)
     else if (comando === '/status') {
-      const fuso = Session.getScriptTimeZone();
-      const hojeBot = Utilities.formatDate(new Date(), fuso, 'dd/MM/yyyy');
-      msg_Consolidar(hojeBot); // Garante que envia o de hoje como string
+      // Dispara o quadro geral do dia em que o comando for pedido
+      const hojeBot = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd/MM/yyyy');
+      msg_Consolidar(hojeBot); 
       enviarTelegram(chatId, "📊 <i>Compilado atualizado enviado ao canal.</i>");
     }
-
-    // 8.4 COMANDO: /escala
     else if (comando === '/escala') {
       msg_EnviarEscala("SOLICITAÇÃO");
     }
-
-    // 8.5 COMANDO: /contatos
     else if (comando === '/contatos') {
-      let contatos = `☎️ <b>TELEFONES ÚTEIS - DEFESA CIVIL</b>\n`;
-      contatos += `──────────────────\n\n`;
-      contatos += `🚒 <b>BOMBEIROS:</b> 193\n`;
-      contatos += `🚓 <b>POLÍCIA MILITAR:</b> 190\n`;
-      contatos += `💡 <b>CEMIG:</b> 116\n`;
-      contatos += `💧 <b>COPASA:</b> 115\n`;
-      contatos += `🌳 <b>MEIO AMBIENTE:</b> 31 9643-9350\n`;
-      contatos += `🏥 <b>SAMU:</b> 192\n\n`;
+      let contatos = `☎️ <b>TELEFONES ÚTEIS</b>\n──────────────────\n`;
+      contatos += `🚒 <b>BOMBEIROS:</b> 193\n🚓 <b>PM:</b> 190\n💡 <b>CEMIG:</b> 116\n`;
+      contatos += `💧 <b>COPASA:</b> 115\n🌳 <b>PODA:</b> 31 9643-9350\n🏥 <b>SAMU:</b> 192\n`;
       enviarTelegram(chatId, contatos);
     }
-
-    // 8.6 COMANDO: /transferir [nº] [data] [destino]
     else if (comando === '/transferir') {
-      const num = partes[1];
-      const data = partes[2];
-      const destino = partes[3] ? partes[3].toLowerCase() : '';
-      if (!num || !data || !['op', 'tec'].includes(destino)) {
-        enviarTelegram(chatId, "⚠️ Use: <code>/transferir [nº] [data] [op ou tec]</code>");
-        return;
-      }
+      // Recurso Operacional avançado: Muda o dono da ocorrência e o chat do relatório
+      const num = partes[1], data = partes[2], destino = partes[3] ? partes[3].toLowerCase() : '';
+      if (!num || !data || !['op', 'tec'].includes(destino)) return enviarTelegram(chatId, "⚠️ Use: <code>/transferir [nº] [data] [op ou tec]</code>");
       transferirChamadoSetor(chatId, num, data, destino);
     }
-
-    // 8.7 COMANDOS DE PENDÊNCIAS (Setorizados)
-    else if (comando === '/pendentesop') {
-      enviarPendentesPorSetor(chatId, 'op');
+    else if (comando === '/editar') {
+      // Modifica campos críticos sem precisar abrir o Forms na rua
+      const num = partes[1], data = partes[2], campo = partes[3];
+      const novoValor = partes.slice(4).join(' '); // Remonta a frase a partir da palavra 4
+      if (!num || !data || !campo || !novoValor) return enviarTelegram(chatId, "⚠️ Use: <code>/editar [nº] [data] [campo] [novo texto]</code>");
+      editarChamadoNaBase(chatId, num, data, campo, novoValor);
     }
-    else if (comando === '/pendentestec') {
-      enviarPendentesPorSetor(chatId, 'tec');
-    }
-
-    // 8.8 LISTA GERAL DE PENDENTES
-    else if (comando === '/pendentes') {
-      // Aqui você pode chamar a função que lista TUDO (OP + TEC)
-      enviarPendentesGeral(chatId); 
-    }
-
-    // 8.9 PLANEJAMENTO DE AGENDADOS
-    else if (comando === '/agendados') {
-      enviarListaAgendados(chatId);
-    }
-
-    // 8.10 COMANDO: /ajuda ou /start
+    else if (comando === '/pendentesop') enviarPendentesSetor(chatId, 'op');
+    else if (comando === '/pendentestec') enviarPendentesSetor(chatId, 'tec');
+    else if (comando === '/pendentes') enviarPendentesGeral(chatId);
+    else if (comando === '/agendados') enviarListaAgendados(chatId);
     else if (comando === '/ajuda' || comando === '/start') {
       let ajuda = `🤖 <b>ASSISTENTE OPERACIONAL</b>\n\n`;
-      ajuda += `🔎 <code>/busca [nº] [data]</code>\n`;
-      ajuda += `📍 <code>/endereco [rua]</code>\n`;
-      ajuda += `📊 <code>/status</code> - Compilado\n`;
-      ajuda += `🚨 <code>/pendentes</code> - Lista Geral\n`;
-      ajuda += `📅 <code>/agendados</code> - Futuros\n`;
-      ajuda += `🔄 <code>/transferir</code> - Mudar setor\n`;
-      ajuda += `☎️ <code>/contatos</code>\n`;
+      ajuda += `🔎 <code>/busca [nº] [data]</code>\n📍 <code>/endereco [rua]</code>\n`;
+      ajuda += `📊 <code>/status</code> - Compilado\n🚨 <code>/pendentes</code> - Visão Geral\n`;
+      ajuda += `📅 <code>/agendados</code> - Futuros\n🔄 <code>/transferir</code> - Mudar setor\n`;
+      ajuda += `✏️ <code>/editar</code> - Atualizar relato/status\n☎️ <code>/contatos</code>\n`;
       enviarTelegram(chatId, ajuda);
     }
-
   } catch (err) {
-    // Se der erro, o log do Google nos avisa o que foi
     console.error("Erro no doPost: " + err.message);
   }
 }
 
 /************************************************************
- * 9. FAST_INFO - MENSAGEM RÁPIDA PARA TELEGRAM
- * manda um alerta visualmente "gritante" para que todos saibam que a fluidez da cidade mudou;
+ * 9. FUNÇÕES DE PESQUISA E EDIÇÃO NA BASE DE DADOS
+ * Ferramentas de Manutenção Via Telegram
  ************************************************************/
 
-function notificarStatusVia(v) {
-  const get = (campo) => v[campo] ? v[campo][0].trim() : '';
-  
-  const status = get('Status da Via');
-  const fuso = Session.getScriptTimeZone();
-  const hora = Utilities.formatDate(new Date(), fuso, 'HH:mm');
+// Busca um chamado cirurgicamente pelo ID
+function buscarPorId(chatId, num, data) {
+  const idProcurado = formatar.id(num, data);
+  const dados = sh(CONFIG.BASE).getDataRange().getValues();
+  const r = dados.find(linha => String(linha[0]) === idProcurado);
 
-  // Define o emoji de cabeçalho baseado no status
-  let alertaEmoji = "🚧";
-  if (status.includes("🔴")) alertaEmoji = "🚫";
-  if (status.includes("🟢")) alertaEmoji = "✅";
+  if (r) {
+    // HTML Escape: Previne que "<" no texto bugue a formatação do Telegram
+    let relatoSeguro = String(r[14] || '').trim().replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    let msg = `🔍 <b>CHAMADO LOCALIZADO</b>\n📄 <b>Nº ${r[1]}</b> (${formatar.data(r[2])})\n──────────────────\n`;
+    msg += `🧭 <b>Status:</b> ${r[3]}\n🧭 <b>Tipologia:</b> ${r[4]} | ${r[5]}\n`;
+    msg += `📍 <b>Local:</b> ${r[7]}, ${r[8]} - ${r[9]}\n👤 <b>Solicitante:</b> ${r[10]} (${r[11]})\n\n`;
+    msg += `<blockquote>📝 <b>Relato de Campo:</b>\n<i>${relatoSeguro || 'Aguardando atendimento...'}</i></blockquote>\n`;
+    msg += `👷 <b>Equipe:</b> ${r[12] || '---'}\n📅 <b>Última Atualização:</b> ${formatar.data(r[22])}`;
+    enviarTelegram(chatId, msg);
+  } else {
+    enviarTelegram(chatId, `❌ Nenhum chamado encontrado para o Nº <b>${num}</b> na data <b>${data}</b>.`);
+  }
+}
 
-  let msg = `${alertaEmoji} <b>ALERTA DE TRÂNSITO / VIA</b>\n`;
-  msg += `──────────────────\n\n`;
+// Varredura de rua: Acha todo chamado numa localidade 
+function buscarPorEndereco(chatId, termo) {
+  const dados = sh(CONFIG.BASE).getDataRange().getValues();
+  const termoLimpo = termo.toLowerCase();
+  const resultados = dados.slice(1).filter(r => String(r[7]).toLowerCase().includes(termoLimpo));
+
+  if (resultados.length === 0) return enviarTelegram(chatId, `📭 Nenhuma ocorrência na rua "<b>${termo}</b>".`);
+
+  let msg = `📍 <b>BUSCA POR ENDEREÇO</b>\n<i>Termo: "${termo}" (${resultados.length} encontrado(s))</i>\n\n`;
+  resultados.forEach(r => {
+    const statusEmoji = String(r[3]).includes('Atendido') ? '✅' : '⏳';
+    msg += `${statusEmoji} 📄 <b>${r[1]}</b> (${formatar.data(r[2])})\n↳ ${r[7]}, nº ${r[8]} - ${r[9]}\n↳ Status: <code>${r[3]}</code>\n\n`;
+  });
+  if (resultados.length > 5) msg += `<i>⚠️ Muitos resultados. Tente ser mais específico.</i>`;
+  enviarTelegram(chatId, msg);
+}
+
+// Intervenção da Coordenação: Troca a "coluna M (equipe)" sem abrir a planilha
+function transferirChamadoSetor(chatId, num, data, destinoSigla) {
+  const sheetBase = sh(CONFIG.BASE);
+  const dados = sheetBase.getDataRange().getValues();
+  const idProcurado = formatar.id(num, data);
+  const chamado = dados.find(r => String(r[0]) === idProcurado);
+
+  if (!chamado) return enviarTelegram(chatId, `❌ Chamado <b>${num}</b> de <b>${data}</b> não encontrado.`);
+
+  const novoChatId = (destinoSigla === 'op') ? CONFIG.TELEGRAM.CHATS.NEW_OPERACIONAL : CONFIG.TELEGRAM.CHATS.NEW_TECNICA;
+  const nomeSetor = (destinoSigla === 'op') ? '📦 OPERACIONAL' : '📐 TÉCNICA';
+
+  let msg = `🔄 <b>CHAMADO TRANSFERIDO PARA ESTE SETOR</b>\n──────────────────\n`;
+  msg += `🆔 <b>Nº:</b> ${chamado[1]}  |  📅 <b>Data:</b> ${formatar.data(chamado[2])}\n`;
+  msg += `🚩 <b>Tipologia:</b> ${chamado[4]}\n📍 <b>Local:</b> ${chamado[7]}, ${chamado[8]} - ${chamado[9]}\n`;
+  msg += `📞 <b>Solicitante:</b> ${chamado[10]} (${chamado[11]})\n──────────────────\n⚠️ <i>Motivo: Reclassificado.</i>`;
+
+  enviarTelegram(novoChatId, msg);
+  enviarTelegram(chatId, `✅ Chamado <b>${num}</b> transferido para <b>${nomeSetor}</b>.`);
   
-  msg += `📍 <b>Local:</b> ${get('Logradouro')}\n`;
-  msg += `🏘️ <b>Bairro:</b> ${get('Bairro')}\n`;
-  msg += `🚩 <b>Incidente:</b> ${get('Tipo de Incidente')}\n\n`;
+  // Atualiza também na Base Master para evitar furos no relatório 
+  const index = dados.findIndex(r => String(r[0]) === idProcurado);
+  if (index !== -1) sheetBase.getRange(index + 1, 13).setValue(nomeSetor);
+}
+
+// Edição Remota: Transforma texto do Bot em uma alteração real em Coluna (Status, Relato, Equipe)
+function editarChamadoNaBase(chatId, num, data, campo, novoValor) {
+  const sheetBase = sh(CONFIG.BASE);
+  const dados = sheetBase.getDataRange().getValues();
+  const idProcurado = formatar.id(num, data);
   
-  msg += `🚦 <b>STATUS:</b> ${status.toUpperCase()}\n\n`;
+  // Puxa a posição matemática exata no Array
+  const index = dados.findIndex(linha => String(linha[0]) === idProcurado);
+
+  if (index !== -1) {
+    const linhaReal = index + 1; // +1 Pois o índice do array começa do 0, e a Planilha da linha 1
+    let coluna = 0, campoNome = '';
+    const campoLimpo = campo.toLowerCase().trim();
     
-  if (get('Observações/Detalhes')) {
-    msg += `📝 <b>Detalhes:</b> <i>${get('Observações/Detalhes')}</i>\n`;
+    // Tradutor: Transforma a palavra do Bot no Índice da Coluna da Planilha
+    if (campoLimpo === 'status') { coluna = 4; campoNome = 'Status Atual'; }
+    else if (campoLimpo === 'relato') { coluna = 15; campoNome = 'Relato de Campo'; }
+    else if (campoLimpo === 'equipe' || campoLimpo === 'equipa') { coluna = 13; campoNome = 'Equipe'; }
+    else return enviarTelegram(chatId, `❌ Campo "<b>${campo}</b>" inválido. Use: status, relato, equipe.`);
+
+    sheetBase.getRange(linhaReal, coluna).setValue(novoValor);
+    sheetBase.getRange(linhaReal, 23).setValue(new Date());
+
+    enviarTelegram(chatId, `✅ <b>CHAMADO ATUALIZADO!</b>\n📄 <b>Nº:</b> ${num}\n✏️ <b>${campoNome}:</b> <i>${novoValor}</i>`);
+    
+    // Alarme Automático: Se na rua botarem como Atendido, o Bot solta foguetes no chat Operacional
+    if (campoLimpo === 'status' && novoValor.toLowerCase().includes('atendido')) {
+       enviarTelegram(CONFIG.TELEGRAM.CHATS.CAMPO, `✅ <b>CHAMADO FINALIZADO!</b>\n📄 Nº ${num} de ${data} acaba de ser baixado pela equipe via sistema.`);
+    }
+
+    // Fecha o ciclo regerando o compilado da data específica modificada
+    msg_Consolidar(data);
+  } else {
+    enviarTelegram(chatId, `❌ Chamado <b>${num}</b> de <b>${data}</b> não encontrado.`);
   }
-
-  msg += `\n──────────────────\n`;
-  msg += `🕒 <i>Informado às ${hora}</i>`;
-
-  // Envia para o INFO_FAST (Gestão) e ENTRADA (Operacional)
-  enviarTelegram(CONFIG.TELEGRAM.CHATS.INFO_FAST, msg);
-  enviarTelegram(CONFIG.TELEGRAM.CHATS.ENTRADA, msg);
 }
 
 /************************************************************
- * 9.1. FAST_INFO - MENSAGEM RÁPIDA PARA TELEGRAM
- * manda um alerta visualmente "gritante" para que todos saibam que a fluidez da cidade mudou;
+ * 10. FUNÇÃO CENTRAL DE ENVIO PARA O TELEGRAM
+ * O coração do tráfego. Todas as funções morrem aqui enviando dados à API.
  ************************************************************/
-function msg_InfoFast() {
-  const sheetBase = sh(CONFIG.BASE);
-  const dados = sheetBase.getDataRange().getValues();
-  if (dados.length <= 1) return;
-
-  const fuso = Session.getScriptTimeZone();
-  const hoje = Utilities.formatDate(new Date(), fuso, 'dd/MM/yyyy');
+function enviarTelegram(chatId, mensagem) {
+  if (!chatId || chatId === '-ocultar') return; // Trava de segurança para não explodir erro 400 se faltar ID
   
-  // 9.1.A Filtrar chamados do dia
-  const chamadosHoje = dados.slice(1).filter(r => formatar.data(r[2]) === hoje);
+  const url = `https://api.telegram.org/bot${CONFIG.TELEGRAM.TOKEN}/sendMessage`;
   
-  // 9.2.B Separar os Pendentes (Status que NÃO contém "Atendido" ou "Cancelado")
-  const pendentes = chamadosHoje.filter(r => {
-    const status = String(r[3]).toLowerCase();
-    return !status.includes('atendido') && !status.includes('cancelado');
+  UrlFetchApp.fetch(url, {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify({ 
+      chat_id: chatId, 
+      text: mensagem, 
+      parse_mode: 'HTML', 
+      disable_web_page_preview: true 
+    }),
+    muteHttpExceptions: true
   });
-
-  // 9.3.C Contadores rápidos
-  const total = chamadosHoje.length;
-  const qtdPendentes = pendentes.length;
-  const atendidos = total - qtdPendentes;
-
-  // 9.4.D Montar a lista detalhada de pendentes
-  let listaPendentes = "";
-  if (pendentes.length > 0) {
-    listaPendentes = "⚠️ <b>DETALHE DOS PENDENTES:</b>\n";
-    pendentes.forEach(p => {
-      const numChamado = p[1];
-      const logradouro = p[7] || 'Endereço não informado';
-      const bairro = p[9] || 'Bairro s/n';
-      const tipo = p[4] || 'Outros';
-      
-      listaPendentes += `• <b>[${numChamado}]</b> ${tipo} - ${logradouro}, ${bairro}\n`;
-    });
-  } else {
-    listaPendentes = "✅ <b>Nenhuma pendência para hoje!</b>\n";
-  }
-
-  // 9.5.E Montar a Mensagem Final
-  let msg = `⚡ <b>INFO FAST - DASHBOARD</b>\n`;
-  msg += `📅 Data: ${hoje}\n`;
-  msg += `──────────────────\n\n`;
-  
-  msg += `📊 <b>RESUMO:</b>\n`;
-  msg += `Total: ${total} | ✅ Atendidos: ${atendidos}\n`;
-  msg += `⏳ <b>Pendentes: ${qtdPendentes}</b>\n\n`;
-  
-  msg += `${listaPendentes}\n`;
-  
-  msg += `──────────────────\n`;
-  msg += `<i>Atualizado em: ${Utilities.formatDate(new Date(), fuso, 'HH:mm')}</i>`;
-
-  enviarTelegram(CONFIG.TELEGRAM.CHATS.INFO_FAST, msg);
-}
-
-/************************************************************
- * 10. FUNÇÕES DE LISTAGEM OPERACIONAL (PENDENTES E AGENDADOS)
- ************************************************************/
-
-// FUNÇÃO 10.1: Lista Geral (Visão de Guerra)
-function enviarPendentesGeral(chatId) {
-  const sheetBase = sh(CONFIG.BASE); // Acessa a base master
-  const dados = sheetBase.getDataRange().getValues(); // Puxa os dados para memória
-  const hoje = formatar.data(new Date()); // Pega a data de hoje formatada
-
-  // Filtra apenas chamados de HOJE que não foram finalizados
-  const pendentes = dados.slice(1).filter(r => {
-    const dataChamado = formatar.data(r[2]);
-    const status = String(r[3]).toLowerCase();
-    return dataChamado === hoje && !status.includes('atendido') && !status.includes('cancelado');
-  });
-
-  let msg = `🚨 <b>STATUS GERAL: PENDÊNCIAS HOJE</b>\n`;
-  msg += `──────────────────\n\n`;
-
-  // Separação visual por setor usando filtros rápidos
-  const op = pendentes.filter(r => String(r[12]).toLowerCase().includes('op'));
-  const tec = pendentes.filter(r => String(r[12]).toLowerCase().includes('tec'));
-
-  msg += `📐 <b>SETOR TÉCNICO:</b>\n`;
-  tec.length ? tec.forEach(r => msg += `• [${r[1]}] ${r[4]} - ${r[7]}\n`) : msg += `<i>Vazio</i>\n`;
-
-  msg += `\n📦 <b>SETOR OPERACIONAL:</b>\n`;
-  op.length ? op.forEach(r => msg += `• [${r[1]}] ${r[4]} - ${r[7]}\n`) : msg += `<i>Vazio</i>\n`;
-
-  msg += `\n──────────────────\n📊 Total Pendente: ${pendentes.length}`;
-  enviarTelegram(chatId, msg);
-}
-
-// FUNÇÃO 10.2: Lista de Agendados (Planejamento Futuro)
-function enviarListaAgendados(chatId) {
-  const sheetBase = sh(CONFIG.BASE);
-  const dados = sheetBase.getDataRange().getValues();
-  const hoje = formatar.data(new Date());
-
-  // Filtra chamados que possuem data na Coluna P (Agendamento) diferente de hoje
-  const agendados = dados.slice(1).filter(r => {
-    const dataAgend = formatar.data(r[15]); // Coluna P
-    const status = String(r[3]);
-    return dataAgend && dataAgend !== hoje && dataAgend !== 'Não informado' && status.includes('Agendado');
-  });
-
-  let msg = `📅 <b>PLANEJAMENTO: AGENDADOS</b>\n`;
-  msg += `──────────────────\n\n`;
-
-  if (agendados.length === 0) {
-    msg += "<i>Não há agendamentos para os próximos dias.</i>";
-  } else {
-    // Ordena por data de agendamento (mais próximo primeiro)
-    agendados.sort((a, b) => new Date(a[15]) - new Date(b[15]));
-    agendados.forEach(r => {
-      msg += `🗓️ <b>${formatar.data(r[15])}</b>\n• [${r[1]}] ${r[12]} - ${r[7]}\n\n`;
-    });
-  }
-
-  enviarTelegram(chatId, msg);
-}
-
-// FUNÇÃO 10.3: Pendentes por Setor (Chamada pelos comandos OP e TEC)
-function enviarPendentesSetor(chatId, setor) {
-  const sheetBase = sh(CONFIG.BASE);
-  const dados = sheetBase.getDataRange().getValues();
-  const hoje = formatar.data(new Date());
-  const nomeSetor = (setor === 'op') ? '📦 OPERACIONAL' : '📐 TÉCNICA';
-
-  const lista = dados.slice(1).filter(r => {
-    const equipe = String(r[12]).toLowerCase();
-    const dataChamado = formatar.data(r[2]);
-    const status = String(r[3]).toLowerCase();
-    return equipe.includes(setor) && dataChamado === hoje && !status.includes('atendido');
-  });
-
-  let msg = `📋 <b>PENDÊNCIAS: ${nomeSetor}</b>\n`;
-  msg += `──────────────────\n\n`;
-  
-  lista.length ? lista.forEach(r => msg += `• [${r[1]}] ${r[7]}, ${r[9]}\n`) : msg += `✅ Tudo em dia!`;
-
-  enviarTelegram(chatId, msg);
 }
